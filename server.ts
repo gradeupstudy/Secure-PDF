@@ -25,10 +25,17 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Storage config for admin PDF uploads
+const getUploadDir = () => {
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    return path.join('/tmp', 'data', 'pdfs');
+  }
+  return path.join(process.cwd(), 'data', 'pdfs');
+};
+
 const upload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => {
-      const storageDir = path.join(process.cwd(), 'data', 'pdfs');
+      const storageDir = getUploadDir();
       if (!fs.existsSync(storageDir)) {
         fs.mkdirSync(storageDir, { recursive: true });
       }
@@ -606,4 +613,8 @@ async function startServer() {
   });
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export default app;

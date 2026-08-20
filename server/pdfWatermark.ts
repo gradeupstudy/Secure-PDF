@@ -2,17 +2,24 @@ import fs from 'fs';
 import path from 'path';
 import { PDFDocument, rgb, StandardFonts, degrees } from 'pdf-lib';
 
-const STORAGE_DIR = path.join(process.cwd(), 'data', 'pdfs');
-
-export function ensureStorageDir(): void {
-  if (!fs.existsSync(STORAGE_DIR)) {
-    fs.mkdirSync(STORAGE_DIR, { recursive: true });
+const getStorageDir = () => {
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    return path.join('/tmp', 'data', 'pdfs');
   }
+  return path.join(process.cwd(), 'data', 'pdfs');
+};
+
+export function ensureStorageDir(): string {
+  const dir = getStorageDir();
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
 }
 
 export function getPdfStoragePath(fileName: string): string {
-  ensureStorageDir();
-  return path.join(STORAGE_DIR, fileName);
+  const dir = ensureStorageDir();
+  return path.join(dir, fileName);
 }
 
 /**
@@ -42,8 +49,9 @@ export async function initializeDefaultPdfs(): Promise<void> {
     }
   ];
 
+  const dir = ensureStorageDir();
   for (const item of defaultPdfs) {
-    const filePath = path.join(STORAGE_DIR, item.fileName);
+    const filePath = path.join(dir, item.fileName);
     if (!fs.existsSync(filePath)) {
       await generateMockPdfFile(filePath, item.title, item.description, item.pages);
     }

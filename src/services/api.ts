@@ -291,8 +291,17 @@ export const api = {
     const cleanUrl = url.trim();
     const cleanKey = key.trim();
 
+    if (!cleanUrl || !cleanKey) {
+      return {
+        configured: false,
+        connected: false,
+        error: 'Please enter both Supabase Project URL and Key.',
+      };
+    }
+
     setStoredSupabaseConfig(cleanUrl, cleanKey);
 
+    // Try backend configuration first
     try {
       const res = await fetch('/api/admin/supabase/configure', {
         method: 'POST',
@@ -301,45 +310,61 @@ export const api = {
       });
       if (res.ok) {
         const data = await res.json();
-        return data;
-      } else {
-        const err = await res.json().catch(() => ({}));
-        if (err.error) {
-          throw new Error(err.error);
+        if (data && typeof data.connected === 'boolean') {
+          return data;
         }
       }
     } catch (serverErr: any) {
-      console.warn('Backend configure failed, validating with client SDK...', serverErr);
-      
-      // If client SDK can connect
-      try {
-        const client = createClient(cleanUrl, cleanKey, {
-          auth: { persistSession: false, autoRefreshToken: false },
-        });
-        const { error } = await client.from('students').select('id').limit(1);
-        if (error) {
-          const msg = (error.message || '').toLowerCase();
-          if (msg.includes('relation') || msg.includes('does not exist') || error.code === '42P01') {
-            return {
-              configured: true,
-              connected: true,
-              tablesReady: false,
-              url: cleanUrl,
-              error: 'Credentials verified! Tables are not created yet. Please execute the SQL Schema in Supabase SQL Editor.',
-            };
-          }
-          throw new Error(error.message || 'Invalid Supabase Key or Connection URL.');
-        }
+      console.warn('Backend configure endpoint error, validating directly with client SDK...', serverErr);
+    }
 
+    // Direct Client-Side Supabase Verification
+    try {
+      const client = createClient(cleanUrl, cleanKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      
+      const { error } = await client.from('students').select('id').limit(1);
+      if (error) {
+        const msg = (error.message || '').toLowerCase();
+        // If tables don't exist yet (error 42P01 or relation does not exist), credentials are still valid!
+        if (
+          msg.includes('relation') || 
+          msg.includes('does not exist') || 
+          msg.includes('could not find the table') ||
+          error.code === '42P01' ||
+          error.code === 'PGRST204' ||
+          error.code === 'PGRST200'
+        ) {
+          return {
+            configured: true,
+            connected: true,
+            tablesReady: false,
+            url: cleanUrl,
+            error: 'Credentials are valid! Tables are not created yet. Please execute the SQL Schema in Supabase SQL Editor.',
+          };
+        }
         return {
           configured: true,
-          connected: true,
-          tablesReady: true,
+          connected: false,
           url: cleanUrl,
+          error: error.message || 'Could not connect. Please verify your Project URL and Key.',
         };
-      } catch (clientErr: any) {
-        throw new Error(clientErr.message || serverErr.message || 'Failed to connect to Supabase.');
       }
+
+      return {
+        configured: true,
+        connected: true,
+        tablesReady: true,
+        url: cleanUrl,
+      };
+    } catch (clientErr: any) {
+      return {
+        configured: false,
+        connected: false,
+        url: cleanUrl,
+        error: clientErr.message || 'Failed to connect to Supabase. Check Project URL and Key.',
+      };
     }
   },
 

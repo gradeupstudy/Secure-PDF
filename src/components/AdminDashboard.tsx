@@ -136,22 +136,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setSavingCredentials(true);
       setConfigFeedback(null);
       const res = await api.configureSupabase(inputSupabaseUrl, inputSupabaseKey);
-      if (res.connected) {
+      if (res && res.connected) {
         setConfigFeedback({
           success: true,
-          message: '🎉 Supabase connected successfully! Local data has been synchronized with the cloud.'
+          message: res.tablesReady 
+            ? '🎉 Supabase connected successfully! Local data is synced with the cloud.'
+            : '✅ Credentials verified! (Note: Please run the SQL Schema in Supabase SQL Editor to create tables if not done yet).'
         });
       } else {
         setConfigFeedback({
           success: false,
-          message: '⚠️ ' + (res.error || 'Connection failed. Please check your credentials.')
+          message: '⚠️ ' + ((res && res.error) || 'Connection failed. Please check your Supabase Project URL and Key.')
         });
       }
       await fetchSupabaseStatus();
     } catch (err: any) {
       setConfigFeedback({
         success: false,
-        message: '❌ ' + (err.message || 'Failed to save and connect.')
+        message: '❌ ' + (err?.message || 'Failed to save and connect.')
       });
     } finally {
       setSavingCredentials(false);

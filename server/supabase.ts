@@ -1,12 +1,8 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 // Global or dynamic config
-let runtimeSupabaseUrl = process.env.SUPABASE_URL || '';
-let runtimeSupabaseKey = 
-  process.env.SUPABASE_SERVICE_ROLE_KEY || 
-  process.env.SUPABASE_ANON_KEY || 
-  process.env.SUPABASE_KEY || 
-  '';
+let runtimeSupabaseUrl = '';
+let runtimeSupabaseKey = '';
 
 export function setSupabaseRuntimeConfig(url: string, key: string) {
   runtimeSupabaseUrl = url.trim();
@@ -14,11 +10,20 @@ export function setSupabaseRuntimeConfig(url: string, key: string) {
   supabaseClient = null; // reset client to reinitialize
 }
 
-const getSupabaseUrl = () => runtimeSupabaseUrl || process.env.SUPABASE_URL || '';
+const getSupabaseUrl = () => 
+  runtimeSupabaseUrl || 
+  process.env.SUPABASE_URL || 
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  process.env.VITE_SUPABASE_URL ||
+  '';
+
 const getSupabaseKey = () => 
   runtimeSupabaseKey ||
   process.env.SUPABASE_SERVICE_ROLE_KEY || 
+  process.env.SUPABASE_SECRET_KEY ||
   process.env.SUPABASE_ANON_KEY || 
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  process.env.VITE_SUPABASE_ANON_KEY ||
   process.env.SUPABASE_KEY || 
   '';
 
@@ -86,22 +91,33 @@ export async function checkSupabaseConnection(): Promise<{
   try {
     const { data, error } = await client.from('students').select('id').limit(1);
     if (error) {
-      if (error.message && error.message.includes('relation "public.students" does not exist')) {
+      const errMsg = (error.message || '').toLowerCase();
+      // If table doesn't exist yet or PGRST schema cache hasn't refreshed
+      if (
+        errMsg.includes('relation') || 
+        errMsg.includes('does not exist') || 
+        errMsg.includes('could not find the table') ||
+        error.code === '42P01' || 
+        error.code === 'PGRST204' ||
+        error.code === 'PGRST200'
+      ) {
         return {
           configured: true,
           connected: true,
           url,
           maskedKey,
           tablesReady: false,
-          error: 'Connected to Supabase, but tables are not created yet. Please execute the SQL Schema in Supabase SQL Editor.',
+          error: 'Supabase credentials are valid! Tables are not created yet. Please execute the SQL Schema in Supabase SQL Editor.',
         };
       }
+
+      // Check if invalid API key or URL
       return {
         configured: true,
         connected: false,
         url,
         maskedKey,
-        error: error.message,
+        error: error.message || 'Invalid Supabase Key or Connection URL.',
       };
     }
 

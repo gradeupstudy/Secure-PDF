@@ -44,7 +44,7 @@ import {
   SecurityEvent, 
   SessionRecord 
 } from '../types';
-import { api } from '../services/api';
+import { api, getStoredSupabaseConfig } from '../services/api';
 import { CreateAccessModal } from './CreateAccessModal';
 
 interface AdminDashboardProps {
@@ -104,8 +104,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [copiedVercelEnv, setCopiedVercelEnv] = useState(false);
 
   // Direct Credentials Form State
-  const [inputSupabaseUrl, setInputSupabaseUrl] = useState('');
-  const [inputSupabaseKey, setInputSupabaseKey] = useState('');
+  const storedConfig = useMemo(() => getStoredSupabaseConfig(), []);
+  const [inputSupabaseUrl, setInputSupabaseUrl] = useState(storedConfig.url || '');
+  const [inputSupabaseKey, setInputSupabaseKey] = useState(storedConfig.key || '');
   const [savingCredentials, setSavingCredentials] = useState(false);
   const [configFeedback, setConfigFeedback] = useState<{ success: boolean; message: string } | null>(null);
 

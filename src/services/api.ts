@@ -1,3 +1,4 @@
+import { createClient } from '@supabase/supabase-js';
 import { 
   OverviewStats, 
   PdfDocument, 
@@ -10,6 +11,8 @@ import {
 } from '../types';
 
 const ADMIN_TOKEN_KEY = 'gradeup_admin_token';
+const SUPABASE_URL_KEY = 'gradeup_supabase_url';
+const SUPABASE_KEY_KEY = 'gradeup_supabase_key';
 
 export function getAdminToken(): string | null {
   return localStorage.getItem(ADMIN_TOKEN_KEY) || 'gradeup_admin_session_token_2026';
@@ -21,6 +24,18 @@ export function setAdminToken(token: string) {
 
 export function clearAdminToken() {
   localStorage.removeItem(ADMIN_TOKEN_KEY);
+}
+
+export function getStoredSupabaseConfig(): { url: string; key: string } {
+  return {
+    url: localStorage.getItem(SUPABASE_URL_KEY) || '',
+    key: localStorage.getItem(SUPABASE_KEY_KEY) || '',
+  };
+}
+
+export function setStoredSupabaseConfig(url: string, key: string) {
+  if (url) localStorage.setItem(SUPABASE_URL_KEY, url);
+  if (key) localStorage.setItem(SUPABASE_KEY_KEY, key);
 }
 
 function adminHeaders(): HeadersInit {
@@ -229,22 +244,103 @@ export const api = {
 
   // --- Supabase Cloud Database Management ---
   getSupabaseStatus: async () => {
-    const res = await fetch('/api/admin/supabase/status', { headers: adminHeaders() });
-    if (!res.ok) throw new Error('Failed to get Supabase status');
-    return res.json();
+    try {
+      const res = await fetch('/api/admin/supabase/status', { headers: adminHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        return data;
+      }
+    } catch (e) {
+      console.warn('Backend status endpoint unreachable:', e);
+    }
+
+    const { url, key } = getStoredSupabaseConfig();
+    if (url && key) {
+      try {
+        const client = createClient(url, key, {
+          auth: { persistSession: false, autoRefreshToken: false },
+        });
+        const { error } = await client.from('students').select('id').limit(1);
+        const errMsg = (error?.message || '').toLowerCase();
+        const isConnected = !error || errMsg.includes('relation') || errMsg.includes('does not exist');
+        return {
+          configured: true,
+          connected: isConnected,
+          tablesReady: !error,
+          url,
+          error: error ? (errMsg.includes('relation') || errMsg.includes('does not exist') ? 'Supabase connected! Tables are not created yet. Please execute SQL Schema.' : error.message) : undefined,
+        };
+      } catch (err: any) {
+        return {
+          configured: true,
+          connected: false,
+          url,
+          error: err.message || 'Direct Supabase connection error',
+        };
+      }
+    }
+
+    return {
+      configured: false,
+      connected: false,
+      error: 'Supabase URL and Key not configured yet.',
+    };
   },
 
   configureSupabase: async (url: string, key: string) => {
-    const res = await fetch('/api/admin/supabase/configure', {
-      method: 'POST',
-      headers: adminHeaders(),
-      body: JSON.stringify({ url, key }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Failed to configure Supabase');
+    const cleanUrl = url.trim();
+    const cleanKey = key.trim();
+
+    setStoredSupabaseConfig(cleanUrl, cleanKey);
+
+    try {
+      const res = await fetch('/api/admin/supabase/configure', {
+        method: 'POST',
+        headers: adminHeaders(),
+        body: JSON.stringify({ url: cleanUrl, key: cleanKey }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data;
+      } else {
+        const err = await res.json().catch(() => ({}));
+        if (err.error) {
+          throw new Error(err.error);
+        }
+      }
+    } catch (serverErr: any) {
+      console.warn('Backend configure failed, validating with client SDK...', serverErr);
+      
+      // If client SDK can connect
+      try {
+        const client = createClient(cleanUrl, cleanKey, {
+          auth: { persistSession: false, autoRefreshToken: false },
+        });
+        const { error } = await client.from('students').select('id').limit(1);
+        if (error) {
+          const msg = (error.message || '').toLowerCase();
+          if (msg.includes('relation') || msg.includes('does not exist') || error.code === '42P01') {
+            return {
+              configured: true,
+              connected: true,
+              tablesReady: false,
+              url: cleanUrl,
+              error: 'Credentials verified! Tables are not created yet. Please execute the SQL Schema in Supabase SQL Editor.',
+            };
+          }
+          throw new Error(error.message || 'Invalid Supabase Key or Connection URL.');
+        }
+
+        return {
+          configured: true,
+          connected: true,
+          tablesReady: true,
+          url: cleanUrl,
+        };
+      } catch (clientErr: any) {
+        throw new Error(clientErr.message || serverErr.message || 'Failed to connect to Supabase.');
+      }
     }
-    return res.json();
   },
 
   syncToSupabase: async () => {

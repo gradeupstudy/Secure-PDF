@@ -1,0 +1,6 @@
+{
+  "name": "Gradeup Study Secure PDF Print Portal",
+  "description": "Enterprise-grade secure PDF access portal for students with manual assignment, dynamic watermarking, screenshot deterrence, controlled printing, and comprehensive access auditing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

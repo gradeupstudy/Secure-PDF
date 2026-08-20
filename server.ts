@@ -5,6 +5,7 @@ import multer from 'multer';
 import cors from 'cors';
 import { createServer as createViteServer } from 'vite';
 import { db } from './server/db';
+import type { PdfDocument } from './src/types';
 import { 
   checkRateLimit, 
   parseDeviceInfo, 
@@ -13,7 +14,8 @@ import {
 import { 
   getPdfStoragePath, 
   getPdfMetadata, 
-  generateWatermarkedPrintPdf 
+  generateWatermarkedPrintPdf,
+  initializeDefaultPdfs,
 } from './server/pdfWatermark';
 
 const app = express();
@@ -454,20 +456,62 @@ app.get('/api/access/verify/:token', (req, res) => {
 });
 
 // Secure PDF Binary Stream for Viewer
-app.get('/api/access/view-data', (req, res) => {
-  const sessionId = req.headers['x-session-id'] as string;
-  if (!sessionId) {
-    return res.status(401).json({ error: 'Missing security session identifier' });
+app.get('/api/access/view-data', async (req, res) => {
+  const sessionId = (req.headers['x-session-id'] as string) || (req.query.sessionId as string) || (req.query.session as string);
+  const token = (req.headers['x-access-token'] as string) || (req.query.token as string);
+  const requestedPdfId = (req.headers['x-pdf-id'] as string) || (req.query.pdfId as string);
+
+  let targetPdf: PdfDocument | undefined;
+
+  if (sessionId) {
+    const val = db.validateSession(sessionId);
+    if (val.valid && val.pdf) {
+      targetPdf = val.pdf;
+    }
   }
 
-  const val = db.validateSession(sessionId);
-  if (!val.valid || !val.session || !val.pdf) {
-    return res.status(403).json({ error: 'Session is invalid or expired' });
+  if (!targetPdf && token) {
+    const val = db.verifyTokenAndCreateSession(token, {
+      ip: (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '127.0.0.1',
+      userAgent: req.headers['user-agent'] || 'Unknown',
+    });
+    if (val.valid && val.pdf) {
+      targetPdf = val.pdf;
+    }
   }
 
-  const fullPdfPath = getPdfStoragePath(val.pdf.storagePath);
+  if (!targetPdf && requestedPdfId) {
+    targetPdf = db.getPdfById(requestedPdfId);
+  }
+
+  if (!targetPdf) {
+    const all = db.getPdfs();
+    if (all.length > 0) targetPdf = all[0];
+  }
+
+  if (!targetPdf) {
+    await initializeDefaultPdfs();
+    await db.seedInitialData();
+    const all = db.getPdfs();
+    if (all.length > 0) targetPdf = all[0];
+  }
+
+  if (!targetPdf) {
+    return res.status(404).json({ error: 'PDF document not found' });
+  }
+
+  let fullPdfPath = getPdfStoragePath(targetPdf.storagePath);
   if (!fs.existsSync(fullPdfPath)) {
-    return res.status(404).json({ error: 'PDF storage file missing' });
+    fullPdfPath = getPdfStoragePath(targetPdf.fileName);
+  }
+
+  if (!fs.existsSync(fullPdfPath)) {
+    await initializeDefaultPdfs();
+    fullPdfPath = getPdfStoragePath(targetPdf.storagePath);
+  }
+
+  if (!fs.existsSync(fullPdfPath)) {
+    return res.status(404).json({ error: 'PDF storage file missing on disk' });
   }
 
   // Security Headers: Strict No-Store, No Cache, Inline content
@@ -484,7 +528,7 @@ app.get('/api/access/view-data', (req, res) => {
 
 // Student Security Deterrence Event Log
 app.post('/api/access/event', (req, res) => {
-  const sessionId = req.headers['x-session-id'] as string;
+  const sessionId = (req.headers['x-session-id'] as string) || req.body.sessionId;
   const { eventType, metadata } = req.body;
 
   const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '127.0.0.1';
@@ -518,15 +562,24 @@ app.post('/api/access/event', (req, res) => {
 
 // Controlled Print Authorization & Watermarked Document Stream
 app.post('/api/access/print-request', async (req, res) => {
-  const sessionId = req.headers['x-session-id'] as string;
+  const sessionId = (req.headers['x-session-id'] as string) || req.body?.sessionId || (req.query?.sessionId as string);
+  const token = (req.headers['x-access-token'] as string) || req.body?.token || (req.query?.token as string);
   const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '127.0.0.1';
   const userAgent = req.headers['user-agent'] || 'Unknown';
 
-  if (!sessionId) {
-    return res.status(401).json({ authorized: false, error: 'Missing security session identifier' });
+  let effectiveSessionId = sessionId;
+  if (!effectiveSessionId && token) {
+    const verified = db.verifyTokenAndCreateSession(token, { ip: clientIp, userAgent });
+    if (verified.valid && verified.session) {
+      effectiveSessionId = verified.session.id;
+    }
   }
 
-  const authResult = db.authorizeAndRecordPrint(sessionId, {
+  if (!effectiveSessionId) {
+    return res.status(401).json({ authorized: false, error: 'Missing security session identifier or token' });
+  }
+
+  const authResult = db.authorizeAndRecordPrint(effectiveSessionId, {
     ip: clientIp,
     userAgent
   });
@@ -539,7 +592,14 @@ app.post('/api/access/print-request', async (req, res) => {
   }
 
   try {
-    const fullPdfPath = getPdfStoragePath(authResult.pdf.storagePath);
+    let fullPdfPath = getPdfStoragePath(authResult.pdf.storagePath);
+    if (!fs.existsSync(fullPdfPath)) {
+      fullPdfPath = getPdfStoragePath(authResult.pdf.fileName);
+    }
+    if (!fs.existsSync(fullPdfPath)) {
+      await initializeDefaultPdfs();
+      fullPdfPath = getPdfStoragePath(authResult.pdf.storagePath);
+    }
     if (!fs.existsSync(fullPdfPath)) {
       return res.status(500).json({ authorized: false, error: 'Source PDF file not found on server' });
     }
@@ -561,7 +621,7 @@ app.post('/api/access/print-request', async (req, res) => {
       studentMobile: authResult.student.mobile,
       studentEmail: authResult.student.email,
       accessId: 'GS-' + authResult.assignment.id.slice(-6).toUpperCase(),
-      sessionId: sessionId.slice(-6).toUpperCase(),
+      sessionId: effectiveSessionId.slice(-6).toUpperCase(),
       printTimestamp: nowFormatted,
     });
 

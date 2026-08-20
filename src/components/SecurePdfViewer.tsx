@@ -203,14 +203,21 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
     setPdfLoading(true);
     setPdfLoadError(null);
 
+    const pdfId = verificationData.pdf?.id || '';
+    const token = (verificationData.session as any)?.sessionToken || (verificationData.assignment as any)?.currentAccessToken || (verificationData.assignment as any)?.accessToken || '';
+
     // 1. Try server endpoint
     try {
-      const res = await fetch('/api/access/view-data', {
-        headers: { 'x-session-id': sessionId },
+      const res = await fetch(`/api/access/view-data?sessionId=${encodeURIComponent(sessionId)}&pdfId=${encodeURIComponent(pdfId)}&token=${encodeURIComponent(token)}`, {
+        headers: {
+          'x-session-id': sessionId,
+          'x-access-token': token,
+          'x-pdf-id': pdfId,
+        },
       });
       if (res.ok) {
         const buffer = await res.arrayBuffer();
-        if (buffer && buffer.byteLength > 0) {
+        if (buffer && buffer.byteLength > 100) {
           loadedPdfBufferRef.current = buffer;
           const doc = new SecurePdfDocument();
           await doc.loadFromBuffer(buffer);
@@ -224,12 +231,13 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
       console.warn('Backend PDF endpoint unreachable, attempting fallback storage...', err);
     }
 
-    const pdfId = verificationData.pdf?.id || '';
-
     // 2. Try IndexedDB Local Cache
     try {
-      const localBlob = await getLocalPdfBlob(pdfId);
-      if (localBlob && localBlob.byteLength > 0) {
+      const localBlob = await getLocalPdfBlob(pdfId) || 
+        (verificationData.pdf?.storagePath ? await getLocalPdfBlob(verificationData.pdf.storagePath) : null) ||
+        (verificationData.pdf?.fileName ? await getLocalPdfBlob(verificationData.pdf.fileName) : null);
+
+      if (localBlob && localBlob.byteLength > 100) {
         loadedPdfBufferRef.current = localBlob;
         const doc = new SecurePdfDocument();
         await doc.loadFromBuffer(localBlob);

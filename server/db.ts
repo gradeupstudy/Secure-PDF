@@ -150,7 +150,7 @@ class Database {
 
     this.data.pdfs = [
       {
-        id: 'pdf_hp_police_01',
+        id: 'pdf-hp-police-01',
         title: 'HP Police Constable Practice Set 01 - Full Mock Test',
         fileName: 'hp_police_constable_mock_set_01.pdf',
         description: 'Official Gradeup Study Mock Examination with 80 Questions with complete solutions.',
@@ -162,7 +162,7 @@ class Database {
         updatedAt: now,
       },
       {
-        id: 'pdf_hp_patwari_02',
+        id: 'pdf-hp-patwari-01',
         title: 'HP Patwari Quantitative Aptitude & Arithmetic Booster 2026',
         fileName: 'hp_patwari_quantitative_aptitude_2026.pdf',
         description: 'High-yield problem solving module with step-by-step solutions.',
@@ -174,7 +174,7 @@ class Database {
         updatedAt: now,
       },
       {
-        id: 'pdf_hp_gk_03',
+        id: 'pdf-hp-gk-01',
         title: 'Gradeup Study Himachal Pradesh GK Special Capsule 2026',
         fileName: 'gradeup_study_hp_gk_special_capsule.pdf',
         description: 'Complete Himachal Pradesh History, Geography, and Culture revision notes.',
@@ -417,7 +417,24 @@ class Database {
   }
 
   public getPdfById(id: string): PdfDocument | undefined {
-    return this.data.pdfs.find(p => p.id === id);
+    if (!id) return undefined;
+    const cleanId = id.trim();
+    const cleanIdNorm = cleanId.toLowerCase().replace(/[-_]/g, '');
+
+    return this.data.pdfs.find(p => {
+      if (p.id === cleanId) return true;
+      if (p.storagePath === cleanId || p.fileName === cleanId) return true;
+      if (p.id.replace(/_/g, '-') === cleanId.replace(/_/g, '-')) return true;
+      if (p.id.replace(/-/g, '_') === cleanId.replace(/-/g, '_')) return true;
+      
+      const pIdNorm = p.id.toLowerCase().replace(/[-_]/g, '');
+      if (pIdNorm === cleanIdNorm) return true;
+
+      const pFileNorm = (p.fileName || '').toLowerCase().replace(/[-_]/g, '');
+      if (pFileNorm && (pFileNorm.includes(cleanIdNorm) || cleanIdNorm.includes(pFileNorm))) return true;
+
+      return false;
+    });
   }
 
   public addPdf(pdf: Omit<PdfDocument, 'id' | 'createdAt' | 'updatedAt'>): PdfDocument {

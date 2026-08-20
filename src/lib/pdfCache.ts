@@ -50,13 +50,81 @@ export async function getLocalPdfBlob(pdfIdOrPath: string): Promise<ArrayBuffer 
   if (!pdfIdOrPath) return null;
   try {
     const db = await openDB();
-    const tx = db.transaction(STORE_BLOBS, 'readonly');
-    const request = tx.objectStore(STORE_BLOBS).get(pdfIdOrPath);
+    const tx = db.transaction([STORE_BLOBS, STORE_META], 'readonly');
+    const blobStore = tx.objectStore(STORE_BLOBS);
+    const metaStore = tx.objectStore(STORE_META);
 
-    return new Promise((resolve) => {
-      request.onsuccess = () => resolve(request.result || null);
-      request.onerror = () => resolve(null);
+    // 1. Direct key lookups
+    const candidateKeys = [
+      pdfIdOrPath,
+      pdfIdOrPath.replace(/-/g, '_'),
+      pdfIdOrPath.replace(/_/g, '-'),
+      pdfIdOrPath.trim(),
+    ];
+
+    for (const key of candidateKeys) {
+      const blob: ArrayBuffer | undefined = await new Promise((resolve) => {
+        const req = blobStore.get(key);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(undefined);
+      });
+      if (blob && blob.byteLength > 100) {
+        return blob;
+      }
+    }
+
+    // 2. Check metadata store to resolve filename/storagePath
+    const allMeta: PdfDocument[] = await new Promise((resolve) => {
+      const req = metaStore.getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
     });
+
+    const matchingMeta = allMeta.find(m => 
+      m.id === pdfIdOrPath || 
+      m.storagePath === pdfIdOrPath || 
+      m.fileName === pdfIdOrPath ||
+      m.id.replace(/_/g, '-') === pdfIdOrPath.replace(/_/g, '-') ||
+      m.id.replace(/-/g, '_') === pdfIdOrPath.replace(/-/g, '_')
+    );
+
+    if (matchingMeta) {
+      const keys = [matchingMeta.id, matchingMeta.storagePath, matchingMeta.fileName].filter(Boolean) as string[];
+      for (const k of keys) {
+        const blob: ArrayBuffer | undefined = await new Promise((resolve) => {
+          const req = blobStore.get(k);
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => resolve(undefined);
+        });
+        if (blob && blob.byteLength > 100) {
+          return blob;
+        }
+      }
+    }
+
+    // 3. If there is any blob stored in IndexedDB and we only have 1, return it
+    const allKeys: IDBValidKey[] = await new Promise((resolve) => {
+      const req = blobStore.getAllKeys();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    });
+
+    if (allKeys.length > 0) {
+      for (const k of allKeys) {
+        if (typeof k === 'string' && (k.includes(pdfIdOrPath) || pdfIdOrPath.includes(k))) {
+          const blob: ArrayBuffer | undefined = await new Promise((resolve) => {
+            const req = blobStore.get(k);
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => resolve(undefined);
+          });
+          if (blob && blob.byteLength > 100) {
+            return blob;
+          }
+        }
+      }
+    }
+
+    return null;
   } catch {
     return null;
   }

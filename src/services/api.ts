@@ -1156,15 +1156,22 @@ export const api = {
   requestAuthorizedPrint: async (
     sessionId: string,
     fallbackPdfBuffer?: ArrayBuffer | null,
-    watermarkOptions?: WatermarkOptions & { pdfId?: string }
+    watermarkOptions?: WatermarkOptions & { pdfId?: string; token?: string }
   ): Promise<Blob> => {
     // 1. Try server-side print endpoint
     try {
       const res = await fetch('/api/access/print-request', {
         method: 'POST',
         headers: {
-          'x-session-id': sessionId
-        }
+          'Content-Type': 'application/json',
+          'x-session-id': sessionId,
+          'x-access-token': watermarkOptions?.token || watermarkOptions?.accessId || '',
+        },
+        body: JSON.stringify({
+          sessionId,
+          token: watermarkOptions?.token || watermarkOptions?.accessId,
+          pdfId: watermarkOptions?.pdfId,
+        })
       });
 
       if (res.ok) {
@@ -1182,6 +1189,16 @@ export const api = {
     if (!bufferToWatermark && watermarkOptions?.pdfId) {
       try {
         bufferToWatermark = await getLocalPdfBlob(watermarkOptions.pdfId);
+      } catch {}
+    }
+
+    if (!bufferToWatermark) {
+      try {
+        const res = await fetch(`/api/access/view-data?sessionId=${encodeURIComponent(sessionId)}&pdfId=${encodeURIComponent(watermarkOptions?.pdfId || '')}`);
+        if (res.ok) {
+          const buf = await res.arrayBuffer();
+          if (buf && buf.byteLength > 100) bufferToWatermark = buf;
+        }
       } catch {}
     }
 

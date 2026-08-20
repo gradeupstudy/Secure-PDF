@@ -18,8 +18,36 @@ export function ensureStorageDir(): string {
 }
 
 export function getPdfStoragePath(fileName: string): string {
-  const dir = ensureStorageDir();
-  return path.join(dir, fileName);
+  if (!fileName) {
+    const dir = ensureStorageDir();
+    return path.join(dir, 'default.pdf');
+  }
+
+  // 1. If absolute path that already exists
+  if (path.isAbsolute(fileName) && fs.existsSync(fileName)) {
+    return fileName;
+  }
+
+  const baseName = path.basename(fileName);
+  const possibleDirs = [
+    ensureStorageDir(),
+    path.join(process.cwd(), 'data', 'pdfs'),
+    path.join('/tmp', 'data', 'pdfs'),
+    path.join(process.cwd(), 'uploads'),
+    path.join('/tmp', 'uploads'),
+  ];
+
+  for (const d of possibleDirs) {
+    if (fs.existsSync(d)) {
+      const candidate1 = path.join(d, fileName);
+      if (fs.existsSync(candidate1)) return candidate1;
+      const candidate2 = path.join(d, baseName);
+      if (fs.existsSync(candidate2)) return candidate2;
+    }
+  }
+
+  const primaryDir = ensureStorageDir();
+  return path.join(primaryDir, baseName);
 }
 
 /**

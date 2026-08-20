@@ -24,6 +24,7 @@ import {
   checkSupabaseConnection, 
   pushAllToSupabase, 
   pullAllFromSupabase, 
+  setSupabaseRuntimeConfig,
   SUPABASE_SQL_SCHEMA 
 } from './supabase';
 
@@ -1163,6 +1164,17 @@ class Database {
     Object.assign(this.data.settings, updates);
     this.save();
     return this.data.settings;
+  }
+
+  public async configureSupabase(url: string, key: string) {
+    setSupabaseRuntimeConfig(url, key);
+    // test connection
+    const status = await checkSupabaseConnection();
+    if (status.connected) {
+      // automatically sync data
+      await pushAllToSupabase(this.data);
+    }
+    return status;
   }
 
   public async getSupabaseStatus() {

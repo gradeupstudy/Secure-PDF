@@ -101,16 +101,59 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [syncingSupabase, setSyncingSupabase] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [copiedSql, setCopiedSql] = useState(false);
+  const [copiedVercelEnv, setCopiedVercelEnv] = useState(false);
+
+  // Direct Credentials Form State
+  const [inputSupabaseUrl, setInputSupabaseUrl] = useState('');
+  const [inputSupabaseKey, setInputSupabaseKey] = useState('');
+  const [savingCredentials, setSavingCredentials] = useState(false);
+  const [configFeedback, setConfigFeedback] = useState<{ success: boolean; message: string } | null>(null);
 
   const fetchSupabaseStatus = async () => {
     try {
       setLoadingSupabase(true);
       const st = await api.getSupabaseStatus();
       setSupabaseStatus(st);
+      if (st.url && !inputSupabaseUrl) {
+        setInputSupabaseUrl(st.url);
+      }
     } catch (err) {
       console.warn('Failed to load Supabase status:', err);
     } finally {
       setLoadingSupabase(false);
+    }
+  };
+
+  const handleSaveAndTestSupabase = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputSupabaseUrl || !inputSupabaseKey) {
+      setConfigFeedback({ success: false, message: 'Please enter both Supabase Project URL and Service Role Key.' });
+      return;
+    }
+
+    try {
+      setSavingCredentials(true);
+      setConfigFeedback(null);
+      const res = await api.configureSupabase(inputSupabaseUrl, inputSupabaseKey);
+      if (res.connected) {
+        setConfigFeedback({
+          success: true,
+          message: '🎉 Supabase connected successfully! Local data has been synchronized with the cloud.'
+        });
+      } else {
+        setConfigFeedback({
+          success: false,
+          message: '⚠️ ' + (res.error || 'Connection failed. Please check your credentials.')
+        });
+      }
+      await fetchSupabaseStatus();
+    } catch (err: any) {
+      setConfigFeedback({
+        success: false,
+        message: '❌ ' + (err.message || 'Failed to save and connect.')
+      });
+    } finally {
+      setSavingCredentials(false);
     }
   };
 
@@ -1122,139 +1165,227 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {currentTab === 'settings' && (
           <div className="max-w-3xl space-y-6">
             {/* SUPABASE PERMANENT CLOUD DATABASE PANEL */}
-            <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-5 shadow-xl">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-                    <Database className="h-5 w-5" />
+            <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-6 shadow-xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                    <Database className="h-6 w-6" />
                   </div>
                   <div>
                     <h2 className="text-base font-bold text-white flex items-center gap-2">
-                      Supabase Cloud Database & Permanent Storage
+                      Supabase Cloud Database (Permanent Storage)
                       {supabaseStatus?.connected ? (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                          Connected & Permanent Active
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                          <Check className="h-3 w-3" /> Live & Connected
                         </span>
                       ) : (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                          Local Fallback Mode
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                          <AlertTriangle className="h-3 w-3" /> Needs Supabase Keys
                         </span>
                       )}
                     </h2>
-                    <p className="text-[11px] text-slate-400">
-                      Permanent cloud storage ensures students can access and view assigned PDFs reliably anytime across any device.
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Store student profiles, assigned PDFs, access tokens, watermarks, and print logs permanently in Supabase.
                     </p>
                   </div>
                 </div>
 
-                <button
-                  onClick={fetchSupabaseStatus}
-                  disabled={loadingSupabase}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs flex items-center gap-1.5 transition self-start sm:self-auto"
-                >
-                  <RefreshCw className={`h-3.5 w-3.5 ${loadingSupabase ? 'animate-spin' : ''}`} />
-                  Check Status
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={fetchSupabaseStatus}
+                    disabled={loadingSupabase}
+                    className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${loadingSupabase ? 'animate-spin' : ''}`} />
+                    Refresh Status
+                  </button>
+                </div>
               </div>
 
-              {/* Status & Connection Details */}
-              <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              {/* Status Overview Card */}
+              <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                   <div>
-                    <span className="text-slate-400 block text-[11px]">Database Connection:</span>
-                    <span className="font-semibold text-white">
-                      {supabaseStatus?.connected ? '🟢 Connected to Supabase Cloud' : '🟡 In-Memory + Local JSON Store'}
+                    <span className="text-slate-400 block text-[11px] font-medium">Connection Status:</span>
+                    <span className="font-bold text-sm text-white flex items-center gap-2 mt-0.5">
+                      {supabaseStatus?.connected ? (
+                        <span className="text-emerald-400 flex items-center gap-1.5">🟢 Connected to Supabase Cloud</span>
+                      ) : (
+                        <span className="text-amber-400 flex items-center gap-1.5">🟡 Running on Temporary Local Memory</span>
+                      )}
                     </span>
                   </div>
                   <div>
-                    <span className="text-slate-400 block text-[11px]">Supabase Project URL:</span>
-                    <span className="font-mono text-slate-300 text-[11px]">
-                      {supabaseStatus?.url || '(Not configured in environment variables)'}
+                    <span className="text-slate-400 block text-[11px] font-medium">Connected Supabase URL:</span>
+                    <span className="font-mono text-slate-300 text-xs block mt-0.5 truncate">
+                      {supabaseStatus?.url || '(Not connected yet)'}
                     </span>
                   </div>
                   <div>
-                    <span className="text-slate-400 block text-[11px]">Stored Students & Assignments:</span>
-                    <span className="text-slate-200 font-medium">
-                      {supabaseStatus?.localRecordCounts?.students || students.length} Students | {supabaseStatus?.localRecordCounts?.assignments || assignments.length} Active Access Links
+                    <span className="text-slate-400 block text-[11px] font-medium">Synced Cloud Data:</span>
+                    <span className="text-slate-200 font-semibold block mt-0.5">
+                      {supabaseStatus?.localRecordCounts?.students || students.length} Students • {supabaseStatus?.localRecordCounts?.assignments || assignments.length} Active Links • {supabaseStatus?.localRecordCounts?.pdfs || pdfs.length} Documents
                     </span>
                   </div>
                   <div>
-                    <span className="text-slate-400 block text-[11px]">Audit & Print Logs:</span>
-                    <span className="text-slate-200 font-medium">
-                      {supabaseStatus?.localRecordCounts?.printLogs || printLogs.length} Prints Logged
+                    <span className="text-slate-400 block text-[11px] font-medium">Print & Security Logs:</span>
+                    <span className="text-slate-200 font-semibold block mt-0.5">
+                      {supabaseStatus?.localRecordCounts?.printLogs || printLogs.length} Prints • {supabaseStatus?.localRecordCounts?.securityEvents || securityLogs.length} Security Audits
                     </span>
                   </div>
                 </div>
 
                 {supabaseStatus?.error && (
-                  <div className="p-3 bg-amber-950/40 border border-amber-800/60 rounded-xl text-[11px] text-amber-200 flex items-start gap-2">
+                  <div className="p-3 bg-amber-950/40 border border-amber-800/60 rounded-xl text-xs text-amber-200 flex items-start gap-2.5">
                     <AlertTriangle className="h-4 w-4 text-amber-400 flex-shrink-0 mt-0.5" />
                     <div>
-                      <p className="font-semibold">Setup Guidance:</p>
-                      <p className="text-amber-300/90">{supabaseStatus.error}</p>
+                      <p className="font-semibold">Notice:</p>
+                      <p className="text-amber-300/90 text-[11px] mt-0.5">{supabaseStatus.error}</p>
                     </div>
-                  </div>
-                )}
-
-                {syncMessage && (
-                  <div className="p-3 bg-slate-800 border border-slate-700 rounded-xl text-[11px] text-slate-200">
-                    {syncMessage}
                   </div>
                 )}
               </div>
 
-              {/* Step-by-Step Instructions */}
-              <div className="space-y-3 text-xs text-slate-300">
-                <h4 className="font-bold text-slate-100 flex items-center gap-1.5">
-                  <Server className="h-4 w-4 text-indigo-400" />
-                  Supabase Connect Kaise Karein (Step-by-Step Guide)
-                </h4>
-
-                <div className="grid grid-cols-1 gap-2.5 text-[11px]">
-                  <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-1">
-                    <span className="font-bold text-indigo-300">1. Supabase Project Setup</span>
-                    <p className="text-slate-400 leading-relaxed">
-                      Go to <a href="https://supabase.com" target="_blank" rel="noreferrer" className="text-indigo-400 underline hover:text-indigo-300">supabase.com</a>, create a free project, then go to <strong>Project Settings → API</strong>.
-                    </p>
+              {/* OPTION A: DIRECT CREDENTIALS INPUT IN ADMIN PANEL */}
+              <div className="p-5 rounded-xl bg-slate-950 border border-indigo-900/40 space-y-4">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-indigo-600/20 text-indigo-400">
+                    <Code className="h-4 w-4" />
                   </div>
-
-                  <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-1">
-                    <span className="font-bold text-indigo-300">2. Environment Variables Add Karein</span>
-                    <p className="text-slate-400 leading-relaxed">
-                      AI Studio ke <strong>Settings / Environment Secrets</strong> me yeh dono keys daalein:
-                    </p>
-                    <div className="mt-1 font-mono text-[10px] bg-slate-950 p-2 rounded-lg text-emerald-400 space-y-0.5">
-                      <div>SUPABASE_URL=https://your-project.supabase.co</div>
-                      <div>SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5c...</div>
-                    </div>
-                  </div>
-
-                  <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-1">
-                    <span className="font-bold text-indigo-300">3. Supabase SQL Schema Run Karein</span>
-                    <p className="text-slate-400 leading-relaxed">
-                      Neeche diye button se complete SQL Schema copy karke Supabase Dashboard ke <strong>SQL Editor</strong> me paste karein aur <strong>Run</strong> daba dein.
-                    </p>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Option 1: Connect Directly from Admin Panel</h3>
+                    <p className="text-[11px] text-slate-400">Paste your Supabase credentials here to instantly connect without restarting.</p>
                   </div>
                 </div>
 
-                {/* Actions */}
-                <div className="flex flex-wrap items-center gap-3 pt-2">
-                  <button
-                    onClick={handleCopySqlSchema}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs flex items-center gap-2 transition"
-                  >
-                    {copiedSql ? <Check className="h-4 w-4 text-emerald-300" /> : <Copy className="h-4 w-4" />}
-                    {copiedSql ? 'SQL Schema Copied to Clipboard!' : 'Copy Supabase SQL Schema'}
-                  </button>
+                <form onSubmit={handleSaveAndTestSupabase} className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                      Supabase Project URL
+                    </label>
+                    <input
+                      type="url"
+                      placeholder="https://xyzcompany.supabase.co"
+                      value={inputSupabaseUrl}
+                      onChange={(e) => setInputSupabaseUrl(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs font-mono placeholder:text-slate-600 focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                      Supabase Service Role Key (or Secret API Key)
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                      value={inputSupabaseKey}
+                      onChange={(e) => setInputSupabaseKey(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs font-mono placeholder:text-slate-600 focus:outline-none focus:border-indigo-500"
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Where to find: Supabase Dashboard ➔ <strong>Project Settings</strong> ➔ <strong>API</strong> ➔ <strong>Project API keys</strong> (use <code>service_role</code> secret).
+                    </p>
+                  </div>
+
+                  {configFeedback && (
+                    <div className={`p-3 rounded-xl text-xs ${configFeedback.success ? 'bg-emerald-950/60 border border-emerald-800 text-emerald-200' : 'bg-rose-950/60 border border-rose-800 text-rose-200'}`}>
+                      {configFeedback.message}
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-3 pt-1">
+                    <button
+                      type="submit"
+                      disabled={savingCredentials}
+                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl flex items-center gap-2 transition disabled:opacity-50 shadow-lg shadow-indigo-900/30"
+                    >
+                      <ShieldCheck className={`h-4 w-4 ${savingCredentials ? 'animate-spin' : ''}`} />
+                      {savingCredentials ? 'Connecting & Verifying...' : 'Save & Connect Supabase'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleSyncToSupabase}
+                      disabled={syncingSupabase || !supabaseStatus?.connected}
+                      className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl flex items-center gap-2 transition disabled:opacity-40"
+                    >
+                      <Cloud className={`h-4 w-4 ${syncingSupabase ? 'animate-pulse' : ''}`} />
+                      {syncingSupabase ? 'Syncing Records...' : 'Push Local Data to Cloud'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* OPTION B: VERCEL DEPLOYMENT ENVIRONMENT VARIABLES GUIDE */}
+              <div className="p-5 rounded-xl bg-slate-950 border border-slate-800 space-y-4">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-sky-600/20 text-sky-400">
+                    <Server className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Option 2: Vercel me Deploy Kiya Hai? (Vercel Environment Setup)</h3>
+                    <p className="text-[11px] text-slate-400">Agar aapne project Vercel par host kiya hai, to Vercel Dashboard me yeh keys add karein:</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2.5 text-xs text-slate-300">
+                  <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-sky-300 text-xs">Vercel Environment Variables:</span>
+                      <button
+                        onClick={() => {
+                          const envText = `SUPABASE_URL=https://your-project.supabase.co\nSUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here`;
+                          navigator.clipboard.writeText(envText);
+                          setCopiedVercelEnv(true);
+                          setTimeout(() => setCopiedVercelEnv(false), 3000);
+                        }}
+                        className="text-[11px] text-sky-400 hover:text-sky-300 flex items-center gap-1 font-semibold"
+                      >
+                        {copiedVercelEnv ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                        {copiedVercelEnv ? 'Copied Example!' : 'Copy Variable Names'}
+                      </button>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-slate-950 font-mono text-[11px] text-emerald-400 space-y-1 border border-slate-800">
+                      <div><strong className="text-slate-400">Variable 1:</strong> Key: <span className="text-white">SUPABASE_URL</span></div>
+                      <div><strong className="text-slate-400">Variable 2:</strong> Key: <span className="text-white">SUPABASE_SERVICE_ROLE_KEY</span></div>
+                    </div>
+
+                    <ol className="list-decimal list-inside text-[11px] text-slate-400 space-y-1 pt-1 leading-relaxed">
+                      <li>Vercel Dashboard par jayein ➔ Apne Project par click karein.</li>
+                      <li><strong>Settings</strong> tab ➔ Left menu me <strong>Environment Variables</strong> par click karein.</li>
+                      <li>Dono variables add karein (Production, Preview, Development teeno tick rakhein).</li>
+                      <li>Add karne ke baad <strong>Deployments</strong> tab me jakar <strong>Redeploy</strong> par click karein.</li>
+                    </ol>
+                  </div>
+                </div>
+              </div>
+
+              {/* STEP 3: SUPABASE SQL SCHEMA CREATION */}
+              <div className="p-5 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-emerald-600/20 text-emerald-400">
+                      <Code className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-white">Database Tables Create Karein (SQL Schema)</h3>
+                      <p className="text-[11px] text-slate-400">Supabase me tables (`students`, `assignments`, `pdfs`, etc.) automatically banane ke liye SQL run karein.</p>
+                    </div>
+                  </div>
 
                   <button
-                    onClick={handleSyncToSupabase}
-                    disabled={syncingSupabase}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center gap-2 transition disabled:opacity-50"
+                    onClick={handleCopySqlSchema}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs flex items-center gap-2 transition shadow-md"
                   >
-                    <Cloud className={`h-4 w-4 ${syncingSupabase ? 'animate-pulse' : ''}`} />
-                    {syncingSupabase ? 'Syncing to Cloud...' : 'Sync Local Data to Supabase'}
+                    {copiedSql ? <Check className="h-4 w-4 text-emerald-300" /> : <Copy className="h-4 w-4" />}
+                    {copiedSql ? 'SQL Script Copied!' : 'Copy Supabase SQL Schema'}
                   </button>
+                </div>
+
+                <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 text-[11px] text-slate-400 leading-relaxed">
+                  <strong>Instructions:</strong> Supabase Dashboard ➔ <strong>SQL Editor</strong> ➔ <strong>New Query</strong> ➔ Copy kiya hua SQL paste karein aur <strong>Run</strong> button dabayein.
                 </div>
               </div>
             </div>

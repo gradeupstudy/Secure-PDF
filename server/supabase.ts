@@ -1,8 +1,22 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-// Environment variables
-const getSupabaseUrl = () => process.env.SUPABASE_URL || '';
+// Global or dynamic config
+let runtimeSupabaseUrl = process.env.SUPABASE_URL || '';
+let runtimeSupabaseKey = 
+  process.env.SUPABASE_SERVICE_ROLE_KEY || 
+  process.env.SUPABASE_ANON_KEY || 
+  process.env.SUPABASE_KEY || 
+  '';
+
+export function setSupabaseRuntimeConfig(url: string, key: string) {
+  runtimeSupabaseUrl = url.trim();
+  runtimeSupabaseKey = key.trim();
+  supabaseClient = null; // reset client to reinitialize
+}
+
+const getSupabaseUrl = () => runtimeSupabaseUrl || process.env.SUPABASE_URL || '';
 const getSupabaseKey = () => 
+  runtimeSupabaseKey ||
   process.env.SUPABASE_SERVICE_ROLE_KEY || 
   process.env.SUPABASE_ANON_KEY || 
   process.env.SUPABASE_KEY || 

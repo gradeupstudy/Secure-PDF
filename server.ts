@@ -336,6 +336,19 @@ app.get('/api/admin/supabase/status', adminAuthMiddleware, async (req, res) => {
   }
 });
 
+app.post('/api/admin/supabase/configure', adminAuthMiddleware, async (req, res) => {
+  try {
+    const { url, key } = req.body;
+    if (!url || !key) {
+      return res.status(400).json({ error: 'Supabase URL and Key are required.' });
+    }
+    const result = await db.configureSupabase(url, key);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/admin/supabase/sync', adminAuthMiddleware, async (req, res) => {
   try {
     const result = await db.syncToSupabase();

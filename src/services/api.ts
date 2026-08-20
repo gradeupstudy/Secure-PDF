@@ -234,6 +234,19 @@ export const api = {
     return res.json();
   },
 
+  configureSupabase: async (url: string, key: string) => {
+    const res = await fetch('/api/admin/supabase/configure', {
+      method: 'POST',
+      headers: adminHeaders(),
+      body: JSON.stringify({ url, key }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to configure Supabase');
+    }
+    return res.json();
+  },
+
   syncToSupabase: async () => {
     const res = await fetch('/api/admin/supabase/sync', {
       method: 'POST',

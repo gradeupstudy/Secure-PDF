@@ -32,7 +32,9 @@ export async function storePdfLocally(pdf: PdfDocument, data: ArrayBuffer): Prom
     const db = await openDB();
     const tx = db.transaction([STORE_BLOBS, STORE_META], 'readwrite');
     tx.objectStore(STORE_BLOBS).put(data, pdf.id);
-    tx.objectStore(STORE_BLOBS).put(data, pdf.storagePath);
+    if (pdf.storagePath) {
+      tx.objectStore(STORE_BLOBS).put(data, pdf.storagePath);
+    }
     tx.objectStore(STORE_META).put(pdf);
 
     return new Promise((resolve, reject) => {
@@ -45,6 +47,7 @@ export async function storePdfLocally(pdf: PdfDocument, data: ArrayBuffer): Prom
 }
 
 export async function getLocalPdfBlob(pdfIdOrPath: string): Promise<ArrayBuffer | null> {
+  if (!pdfIdOrPath) return null;
   try {
     const db = await openDB();
     const tx = db.transaction(STORE_BLOBS, 'readonly');
@@ -71,5 +74,24 @@ export async function getLocalPdfs(): Promise<PdfDocument[]> {
     });
   } catch {
     return [];
+  }
+}
+
+export async function deleteLocalPdf(pdfId: string, storagePath?: string): Promise<void> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction([STORE_BLOBS, STORE_META], 'readwrite');
+    tx.objectStore(STORE_META).delete(pdfId);
+    tx.objectStore(STORE_BLOBS).delete(pdfId);
+    if (storagePath) {
+      tx.objectStore(STORE_BLOBS).delete(storagePath);
+    }
+
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (err) {
+    console.warn('Failed to delete PDF from IndexedDB:', err);
   }
 }

@@ -9,11 +9,40 @@ import {
   SessionRecord, 
   StudentAccessVerification 
 } from '../types';
-import { storePdfLocally, getLocalPdfBlob, getLocalPdfs } from '../lib/pdfCache';
+import { storePdfLocally, getLocalPdfBlob, getLocalPdfs, deleteLocalPdf } from '../lib/pdfCache';
+import { stampWatermarksOnPdf, WatermarkOptions } from '../lib/watermarkPdf';
 
 const ADMIN_TOKEN_KEY = 'gradeup_admin_token';
 const SUPABASE_URL_KEY = 'gradeup_supabase_url';
 const SUPABASE_KEY_KEY = 'gradeup_supabase_key';
+const DELETED_PDF_KEY = 'gradeup_deleted_pdf_ids';
+
+export function getDeletedPdfIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DELETED_PDF_KEY);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function addDeletedPdfId(id: string) {
+  if (!id) return;
+  const ids = getDeletedPdfIds();
+  ids.add(id);
+  if (id.includes('_')) ids.add(id.replace(/_/g, '-'));
+  if (id.includes('-')) ids.add(id.replace(/-/g, '_'));
+  localStorage.setItem(DELETED_PDF_KEY, JSON.stringify(Array.from(ids)));
+}
+
+export function removeDeletedPdfId(id: string) {
+  if (!id) return;
+  const ids = getDeletedPdfIds();
+  ids.delete(id);
+  if (id.includes('_')) ids.delete(id.replace(/_/g, '-'));
+  if (id.includes('-')) ids.delete(id.replace(/-/g, '_'));
+  localStorage.setItem(DELETED_PDF_KEY, JSON.stringify(Array.from(ids)));
+}
 
 export function getAdminToken(): string | null {
   return localStorage.getItem(ADMIN_TOKEN_KEY) || 'gradeup_admin_session_token_2026';
@@ -71,7 +100,7 @@ function adminHeaders(): HeadersInit {
   };
 }
 
-// Default fallback PDFs if empty
+// Default fallback PDFs
 const DEFAULT_FALLBACK_PDFS: PdfDocument[] = [
   {
     id: 'pdf-hp-police-01',
@@ -81,8 +110,8 @@ const DEFAULT_FALLBACK_PDFS: PdfDocument[] = [
     storagePath: 'hp_police_constable_mock_set_01.pdf',
     fileSize: 2450000,
     pageCount: 4,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
+    updatedAt: new Date(Date.now() - 86400000 * 3).toISOString(),
     status: 'ACTIVE',
   },
   {
@@ -93,8 +122,8 @@ const DEFAULT_FALLBACK_PDFS: PdfDocument[] = [
     storagePath: 'hp_patwari_quantitative_aptitude_2026.pdf',
     fileSize: 1850000,
     pageCount: 3,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+    updatedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
     status: 'ACTIVE',
   },
   {
@@ -105,8 +134,8 @@ const DEFAULT_FALLBACK_PDFS: PdfDocument[] = [
     storagePath: 'gradeup_study_hp_gk_special_capsule.pdf',
     fileSize: 1950000,
     pageCount: 3,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    createdAt: new Date(Date.now() - 86400000).toISOString(),
+    updatedAt: new Date(Date.now() - 86400000).toISOString(),
     status: 'ACTIVE',
   }
 ];
@@ -189,12 +218,21 @@ export const api = {
 
   // --- PDFs ---
   getPdfs: async (): Promise<PdfDocument[]> => {
+    const deletedIds = getDeletedPdfIds();
+    const pdfMap = new Map<string, PdfDocument>();
+
     // 1. Try backend
     try {
       const res = await fetch('/api/admin/pdfs', { headers: adminHeaders() });
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) return data;
+        if (Array.isArray(data)) {
+          for (const item of data) {
+            if (!deletedIds.has(item.id) && !deletedIds.has(item.storagePath) && !deletedIds.has(item.fileName)) {
+              pdfMap.set(item.id, item);
+            }
+          }
+        }
       }
     } catch {
       // ignore
@@ -205,32 +243,49 @@ export const api = {
     if (sb) {
       try {
         const { data, error } = await sb.from('pdfs').select('*');
-        if (!error && data && data.length > 0) {
-          return data.map((row: any): PdfDocument => ({
-            id: row.id,
-            title: row.title || row.filename,
-            fileName: row.filename || row.file_name || row.title,
-            description: row.description || 'Gradeup Study Material',
-            storagePath: row.filepath || row.storage_path || row.filename,
-            fileSize: Number(row.filesize || row.file_size || 0),
-            pageCount: Number(row.pageCount || row.page_count || 1),
-            createdAt: row.createdAt || row.created_at || new Date().toISOString(),
-            updatedAt: row.updatedAt || row.updated_at || new Date().toISOString(),
-            status: (row.status || 'ACTIVE').toUpperCase() as any,
-          }));
+        if (!error && data) {
+          for (const row of data) {
+            const id = row.id;
+            const storagePath = row.filepath || row.storage_path || row.filename;
+            if (!deletedIds.has(id) && !deletedIds.has(storagePath) && !deletedIds.has(row.filename)) {
+              pdfMap.set(id, {
+                id,
+                title: row.title || row.filename,
+                fileName: row.filename || row.file_name || row.title,
+                description: row.description || 'Gradeup Study Material',
+                storagePath,
+                fileSize: Number(row.filesize || row.file_size || 0),
+                pageCount: Number(row.pageCount || row.page_count || 1),
+                createdAt: row.createdAt || row.created_at || new Date().toISOString(),
+                updatedAt: row.updatedAt || row.updated_at || new Date().toISOString(),
+                status: (row.status || 'ACTIVE').toUpperCase() as any,
+              });
+            }
+          }
         }
       } catch (err) {
         console.warn('Supabase getPdfs error:', err);
       }
     }
 
-    // 3. Try Local Cache
-    const localPdfs = await getLocalPdfs();
-    if (localPdfs.length > 0) {
-      return [...localPdfs, ...DEFAULT_FALLBACK_PDFS];
+    // 3. Try Local Cache (IndexedDB)
+    try {
+      const localPdfs = await getLocalPdfs();
+      for (const item of localPdfs) {
+        if (!deletedIds.has(item.id) && !deletedIds.has(item.storagePath) && !deletedIds.has(item.fileName)) {
+          pdfMap.set(item.id, item);
+        }
+      }
+    } catch {}
+
+    // 4. If no uploaded PDFs match default IDs and default IDs are not deleted, supply default templates
+    for (const fb of DEFAULT_FALLBACK_PDFS) {
+      if (!deletedIds.has(fb.id) && !deletedIds.has(fb.storagePath) && !deletedIds.has(fb.fileName) && !pdfMap.has(fb.id)) {
+        pdfMap.set(fb.id, fb);
+      }
     }
 
-    return DEFAULT_FALLBACK_PDFS;
+    return Array.from(pdfMap.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   },
 
   uploadPdf: async (formData: FormData): Promise<PdfDocument> => {
@@ -238,22 +293,6 @@ export const api = {
     const titleInput = (formData.get('title') as string) || '';
     const descriptionInput = (formData.get('description') as string) || '';
 
-    // 1. Try backend upload first
-    try {
-      const token = getAdminToken() || 'gradeup_admin_session_token_2026';
-      const res = await fetch('/api/admin/pdfs/upload', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData
-      });
-      if (res.ok) {
-        return await res.json();
-      }
-    } catch (err) {
-      console.warn('Server upload endpoint unreachable, executing direct cloud storage...', err);
-    }
-
-    // 2. Client-Side Upload and PDF Processing
     if (!file) {
       throw new Error('Please select a PDF file.');
     }
@@ -268,7 +307,7 @@ export const api = {
     try {
       arrayBuffer = await file.arrayBuffer();
       const { PDFDocument } = await import('pdf-lib');
-      const loadedPdf = await PDFDocument.load(arrayBuffer);
+      const loadedPdf = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
       pageCount = loadedPdf.getPageCount() || 1;
     } catch (pdfErr) {
       console.warn('Failed to parse PDF pages with pdf-lib, defaulting to 1:', pdfErr);
@@ -288,14 +327,34 @@ export const api = {
       status: 'ACTIVE',
     };
 
-    // Store in IndexedDB cache for instant local rendering
+    removeDeletedPdfId(pdfId);
+    removeDeletedPdfId(safeFilename);
+    removeDeletedPdfId(file.name);
+
+    // Store in IndexedDB for instant local rendering & print availability
     await storePdfLocally(newPdf, arrayBuffer);
 
-    // Save to Supabase Cloud
+    // 1. Try backend upload
+    try {
+      const token = getAdminToken() || 'gradeup_admin_session_token_2026';
+      const res = await fetch('/api/admin/pdfs/upload', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: formData
+      });
+      if (res.ok) {
+        const serverPdf = await res.json();
+        await storePdfLocally({ ...newPdf, ...serverPdf }, arrayBuffer);
+        return serverPdf;
+      }
+    } catch (err) {
+      console.warn('Server upload endpoint unreachable, saving to cloud/client storage...', err);
+    }
+
+    // 2. Save to Supabase Cloud
     const sb = getClientSupabase();
     if (sb) {
       try {
-        // Try saving to Supabase Storage bucket
         try {
           await sb.storage.from('pdfs').upload(safeFilename, file, {
             contentType: 'application/pdf',
@@ -305,8 +364,7 @@ export const api = {
           console.warn('Supabase storage bucket upload notice:', stErr);
         }
 
-        // Insert into Supabase 'pdfs' table
-        const { error: insertErr } = await sb.from('pdfs').upsert({
+        await sb.from('pdfs').upsert({
           id: newPdf.id,
           title: newPdf.title,
           filename: newPdf.fileName,
@@ -315,10 +373,6 @@ export const api = {
           pageCount: newPdf.pageCount,
           createdAt: newPdf.createdAt,
         });
-
-        if (insertErr) {
-          console.warn('Supabase pdfs table insert notice:', insertErr);
-        }
       } catch (sbErr) {
         console.warn('Supabase direct upload notice:', sbErr);
       }
@@ -350,20 +404,38 @@ export const api = {
     return { id, ...updates } as PdfDocument;
   },
 
-  deletePdf: async (id: string): Promise<void> => {
+  deletePdf: async (id: string, storagePath?: string): Promise<void> => {
+    addDeletedPdfId(id);
+    if (storagePath) addDeletedPdfId(storagePath);
+
+    // 1. Delete from IndexedDB local storage immediately
     try {
-      const res = await fetch(`/api/admin/pdfs/${id}`, {
+      await deleteLocalPdf(id, storagePath);
+    } catch (e) {
+      console.warn('deleteLocalPdf notice:', e);
+    }
+
+    // 2. Delete from Backend server
+    try {
+      await fetch(`/api/admin/pdfs/${encodeURIComponent(id)}`, {
         method: 'DELETE',
         headers: adminHeaders()
       });
-      if (res.ok) return;
     } catch {
       // ignore
     }
 
+    // 3. Delete from Supabase Database & Storage Bucket
     const sb = getClientSupabase();
     if (sb) {
-      await sb.from('pdfs').delete().eq('id', id);
+      try {
+        await sb.from('pdfs').delete().eq('id', id);
+        if (storagePath) {
+          await sb.storage.from('pdfs').remove([storagePath]);
+        }
+      } catch (err) {
+        console.warn('Supabase deletePdf notice:', err);
+      }
     }
   },
 
@@ -922,17 +994,18 @@ export const api = {
 
   // --- Student Verification & Access ---
   verifyStudentAccess: async (token: string): Promise<StudentAccessVerification> => {
+    // 1. Try server verification
     try {
       const res = await fetch(`/api/access/verify/${encodeURIComponent(token)}`);
       if (res.ok) {
         const data = await res.json();
-        return data;
+        if (data && data.valid) return data;
       }
     } catch {
       // ignore
     }
 
-    // Direct Supabase Verification
+    // 2. Direct Supabase Verification
     const sb = getClientSupabase();
     if (sb) {
       try {
@@ -951,7 +1024,7 @@ export const api = {
             valid: true,
             assignment: {
               id: assign.id,
-              status: assign.status?.toUpperCase() || 'ACTIVE',
+              status: (assign.status || 'ACTIVE').toUpperCase(),
               allowPrint: assign.allowPrint ?? assign.allow_print ?? false,
               printLimit: assign.printLimit || assign.print_limit || 1,
               printCount: assign.printsUsed || assign.print_count || 0,
@@ -976,7 +1049,70 @@ export const api = {
       }
     }
 
-    // Default sample mock validation
+    // 3. Local Storage Assignments Verification
+    try {
+      const localAssignRaw = localStorage.getItem('gradeup_local_assignments');
+      if (localAssignRaw) {
+        const assignments: Assignment[] = JSON.parse(localAssignRaw);
+        const match = assignments.find(
+          a => a.currentAccessToken === token || (a as any).accessToken === token || a.id === token
+        );
+        if (match) {
+          const allPdfs = await api.getPdfs();
+          const allStudents = await api.getStudents();
+
+          const targetPdf = allPdfs.find(p => p.id === match.pdfId) || {
+            id: match.pdfId,
+            title: 'Gradeup Study Material',
+            pageCount: 4,
+            fileSize: 1500000,
+          };
+
+          const targetStudent = match.student || allStudents.find(s => s.id === match.studentId) || {
+            id: match.studentId || 'std_01',
+            name: 'Authorized Candidate',
+            mobile: '9816012345',
+            email: 'candidate@gradeupstudy.com',
+          };
+
+          return {
+            valid: match.status === 'ACTIVE',
+            assignment: {
+              id: match.id,
+              status: match.status,
+              allowPrint: match.allowPrint,
+              printLimit: match.printLimit,
+              printCount: match.printCount || 0,
+              expiresAt: match.expiresAt,
+            },
+            student: {
+              id: targetStudent.id,
+              name: targetStudent.name,
+              mobile: targetStudent.mobile,
+              email: targetStudent.email,
+            },
+            pdf: {
+              id: targetPdf.id,
+              title: (targetPdf as any).title || (targetPdf as any).fileName || 'Gradeup Study Material',
+              pageCount: targetPdf.pageCount || 4,
+              fileSize: (targetPdf as any).fileSize || 1500000,
+            },
+          };
+        }
+      }
+    } catch (localErr) {
+      console.warn('Local assignment verification error:', localErr);
+    }
+
+    // 4. Fallback Default Verification
+    const allPdfs = await api.getPdfs();
+    const fallbackPdf = allPdfs[0] || {
+      id: 'pdf-hp-gk-01',
+      title: 'Gradeup Study Himachal Pradesh GK Special Capsule 2026',
+      pageCount: 3,
+      fileSize: 1950000,
+    };
+
     return {
       valid: true,
       assignment: {
@@ -994,10 +1130,10 @@ export const api = {
         email: 'candidate@gradeupstudy.com',
       },
       pdf: {
-        id: 'mock-pdf-01',
-        title: 'Gradeup Study Himachal Pradesh GK Special Capsule',
-        pageCount: 3,
-        fileSize: 1950000,
+        id: fallbackPdf.id,
+        title: (fallbackPdf as any).title || 'Gradeup Study Practice Capsule',
+        pageCount: fallbackPdf.pageCount || 3,
+        fileSize: (fallbackPdf as any).fileSize || 1950000,
       },
     };
   },
@@ -1017,7 +1153,12 @@ export const api = {
     }
   },
 
-  requestAuthorizedPrint: async (sessionId: string): Promise<Blob> => {
+  requestAuthorizedPrint: async (
+    sessionId: string,
+    fallbackPdfBuffer?: ArrayBuffer | null,
+    watermarkOptions?: WatermarkOptions & { pdfId?: string }
+  ): Promise<Blob> => {
+    // 1. Try server-side print endpoint
     try {
       const res = await fetch('/api/access/print-request', {
         method: 'POST',
@@ -1027,27 +1168,86 @@ export const api = {
       });
 
       if (res.ok) {
-        return await res.blob();
+        const blob = await res.blob();
+        if (blob && blob.size > 800) {
+          return blob;
+        }
       }
     } catch {
-      // Fallback
+      // Server unreachable, proceed to client-side watermarking
     }
 
-    // Generate authorized print PDF locally with watermark
+    // 2. Client-Side Watermarking using the REAL loaded PDF buffer
+    let bufferToWatermark = fallbackPdfBuffer;
+    if (!bufferToWatermark && watermarkOptions?.pdfId) {
+      try {
+        bufferToWatermark = await getLocalPdfBlob(watermarkOptions.pdfId);
+      } catch {}
+    }
+
+    if (bufferToWatermark && bufferToWatermark.byteLength > 0) {
+      try {
+        const watermarkedBytes = await stampWatermarksOnPdf(bufferToWatermark, {
+          brand: 'GRADEUP STUDY',
+          studentName: watermarkOptions?.studentName || 'Authorized Candidate',
+          studentMobile: watermarkOptions?.studentMobile || '',
+          studentEmail: watermarkOptions?.studentEmail || '',
+          accessId: watermarkOptions?.accessId || sessionId.slice(0, 8),
+          sessionId,
+          timestamp: watermarkOptions?.timestamp || new Date().toLocaleString('en-IN'),
+        });
+        return new Blob([watermarkedBytes], { type: 'application/pdf' });
+      } catch (stampErr) {
+        console.error('Failed to stamp watermarks on loaded PDF buffer:', stampErr);
+      }
+    }
+
+    // 3. Emergency fallback if no buffer was available
     const { PDFDocument, StandardFonts, rgb, degrees } = await import('pdf-lib');
     const pdfDoc = await PDFDocument.create();
     const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const fontReg = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
     const page = pdfDoc.addPage([595.28, 841.89]);
-    page.drawText('GRADEUP STUDY - AUTHORIZED PRINT COPY', {
+    page.drawRectangle({
+      x: 0,
+      y: 841.89 - 24,
+      width: 595.28,
+      height: 24,
+      color: rgb(0.85, 0.12, 0.12),
+    });
+    page.drawText(`GRADEUP STUDY SECURE HARD COPY • CANDIDATE: ${(watermarkOptions?.studentName || 'STUDENT').toUpperCase()} • MOB: ${watermarkOptions?.studentMobile || ''}`, {
+      x: 20,
+      y: 841.89 - 17,
+      size: 9,
+      font,
+      color: rgb(1, 1, 1),
+    });
+
+    page.drawText('GRADEUP STUDY - OFFICIAL AUTHORIZED PRINT COPY', {
       x: 50,
-      y: 780,
+      y: 750,
       size: 16,
       font,
       color: rgb(0.1, 0.1, 0.5),
     });
 
-    page.drawText('WATERMARK: AUTHORIZED HARD COPY • TRACKED AUDIT ID: ' + sessionId, {
+    page.drawText(`Student Name: ${watermarkOptions?.studentName || 'Candidate'}`, {
+      x: 50,
+      y: 700,
+      size: 12,
+      font: fontReg,
+      color: rgb(0.2, 0.2, 0.2),
+    });
+    page.drawText(`Mobile Number: ${watermarkOptions?.studentMobile || 'Registered Number'}`, {
+      x: 50,
+      y: 680,
+      size: 12,
+      font: fontReg,
+      color: rgb(0.2, 0.2, 0.2),
+    });
+
+    page.drawText('WATERMARK: AUTHORIZED HARD COPY • AUDIT ID: ' + sessionId, {
       x: 60,
       y: 400,
       size: 14,

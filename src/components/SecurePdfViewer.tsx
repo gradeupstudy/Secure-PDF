@@ -62,6 +62,7 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
   const canvasRefs = useRef<{ [key: number]: HTMLCanvasElement | null }>({});
   const containerRef = useRef<HTMLDivElement | null>(null);
   const pdfDocRef = useRef<SecurePdfDocument | null>(null);
+  const loadedPdfBufferRef = useRef<ArrayBuffer | null>(null);
   const sessionId = verificationData.session?.id || '';
 
   // 1. Dynamic Watermark Micro-Shifting (every 8 seconds to deter static mask subtraction)
@@ -204,15 +205,21 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
 
     // 1. Try server endpoint
     try {
-      const doc = new SecurePdfDocument();
-      await doc.loadFromUrl('/api/access/view-data', {
-        'x-session-id': sessionId,
+      const res = await fetch('/api/access/view-data', {
+        headers: { 'x-session-id': sessionId },
       });
-
-      pdfDocRef.current = doc;
-      setTotalPages(doc.totalPages);
-      setPdfLoading(false);
-      return;
+      if (res.ok) {
+        const buffer = await res.arrayBuffer();
+        if (buffer && buffer.byteLength > 0) {
+          loadedPdfBufferRef.current = buffer;
+          const doc = new SecurePdfDocument();
+          await doc.loadFromBuffer(buffer);
+          pdfDocRef.current = doc;
+          setTotalPages(doc.totalPages);
+          setPdfLoading(false);
+          return;
+        }
+      }
     } catch (err) {
       console.warn('Backend PDF endpoint unreachable, attempting fallback storage...', err);
     }
@@ -222,7 +229,8 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
     // 2. Try IndexedDB Local Cache
     try {
       const localBlob = await getLocalPdfBlob(pdfId);
-      if (localBlob) {
+      if (localBlob && localBlob.byteLength > 0) {
+        loadedPdfBufferRef.current = localBlob;
         const doc = new SecurePdfDocument();
         await doc.loadFromBuffer(localBlob);
         pdfDocRef.current = doc;
@@ -244,6 +252,7 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
           const { data: fileBlob } = await sb.storage.from('pdfs').download(filePath);
           if (fileBlob) {
             const buffer = await fileBlob.arrayBuffer();
+            loadedPdfBufferRef.current = buffer;
             const doc = new SecurePdfDocument();
             await doc.loadFromBuffer(buffer);
             pdfDocRef.current = doc;
@@ -317,6 +326,7 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
       }
 
       const pdfBytes = await pdfDoc.save();
+      loadedPdfBufferRef.current = pdfBytes.buffer;
       const doc = new SecurePdfDocument();
       await doc.loadFromBuffer(pdfBytes.buffer);
       pdfDocRef.current = doc;
@@ -381,15 +391,42 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
     }
 
     setIsPrinting(true);
-    setPrintStatusMessage('Authorizing print session and generating indelible student watermark...');
+    setPrintStatusMessage('Stamping student watermarks across all pages of the document...');
     setPrintErrorMessage(null);
 
     try {
-      // 1. Call server print endpoint
-      const blob = await api.requestAuthorizedPrint(sessionId);
+      // 1. Generate stamped PDF with real student watermark data & real document buffer
+      const blob = await api.requestAuthorizedPrint(
+        sessionId,
+        loadedPdfBufferRef.current,
+        {
+          brand: 'GRADEUP STUDY',
+          studentName: verificationData.student?.name || 'Candidate',
+          studentMobile: verificationData.student?.mobile || '',
+          studentEmail: verificationData.student?.email || '',
+          accessId: verificationData.assignment?.id || 'GS-SECURE',
+          sessionId,
+          pdfId: verificationData.pdf?.id,
+          timestamp: new Date().toLocaleString('en-IN', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+          })
+        }
+      );
 
-      setPrintStatusMessage('Stamp generated. Launching secure print window...');
+      setPrintStatusMessage('Stamp generated. Launching print dialog...');
       setPrintCount(prev => prev + 1);
+
+      api.logSecurityEvent(sessionId, 'AUTHORIZED_PRINT_TRIGGERED', {
+        pageCount: totalPages,
+        studentName: verificationData.student?.name,
+        timestamp: new Date().toISOString()
+      });
 
       // 2. Create temporary object URL for print iframe
       const blobUrl = URL.createObjectURL(blob);
@@ -404,24 +441,39 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
 
       document.body.appendChild(printIframe);
 
-      printIframe.onload = () => {
-        setTimeout(() => {
-          try {
-            printIframe.contentWindow?.focus();
-            printIframe.contentWindow?.print();
-          } catch (err) {
-            console.error('Print trigger error:', err);
-          } finally {
-            // Clean up temporary iframe and revoke object URL after short delay
-            setTimeout(() => {
+      let printTriggered = false;
+      const triggerPrint = () => {
+        if (printTriggered) return;
+        printTriggered = true;
+        try {
+          printIframe.contentWindow?.focus();
+          printIframe.contentWindow?.print();
+        } catch (err) {
+          console.warn('Iframe print failed, opening print helper:', err);
+          window.open(blobUrl, '_blank');
+        } finally {
+          setTimeout(() => {
+            if (document.body.contains(printIframe)) {
               document.body.removeChild(printIframe);
-              URL.revokeObjectURL(blobUrl);
-              setIsPrinting(false);
-              setPrintStatusMessage(null);
-            }, 3000);
-          }
-        }, 500);
+            }
+            URL.revokeObjectURL(blobUrl);
+            setIsPrinting(false);
+            setPrintStatusMessage(null);
+          }, 4000);
+        }
       };
+
+      printIframe.onload = () => {
+        setTimeout(triggerPrint, 600);
+      };
+
+      // Fallback timer in case iframe.onload does not fire in certain browser configurations
+      setTimeout(() => {
+        if (!printTriggered) {
+          triggerPrint();
+        }
+      }, 2000);
+
     } catch (err: any) {
       console.error('Print failed:', err);
       setPrintErrorMessage(err.message || 'Print authorization failed.');

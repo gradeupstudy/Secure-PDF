@@ -890,13 +890,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </button>
                       <button
                         onClick={async () => {
-                          if (window.confirm('Delete this PDF from private storage?')) {
-                            await api.deletePdf(pdf.id);
+                          if (window.confirm(`Are you sure you want to permanently delete "${pdf.title}"?`)) {
+                            setPdfs(prev => prev.filter(p => p.id !== pdf.id && p.storagePath !== pdf.storagePath));
+                            await api.deletePdf(pdf.id, pdf.storagePath);
                             await fetchAllData();
                           }
                         }}
-                        className="text-rose-400 hover:text-rose-300"
-                        title="Delete PDF"
+                        className="p-1.5 rounded-lg text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors"
+                        title="Delete PDF from Storage"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>

@@ -442,7 +442,12 @@ class Database {
   }
 
   public deletePdf(id: string): boolean {
-    const idx = this.data.pdfs.findIndex(p => p.id === id);
+    const idx = this.data.pdfs.findIndex(p => 
+      p.id === id || 
+      p.storagePath === id || 
+      p.fileName === id ||
+      p.id.replace(/_/g, '-') === id.replace(/_/g, '-')
+    );
     if (idx !== -1) {
       const pdf = this.data.pdfs[idx];
       // delete storage file
@@ -455,14 +460,14 @@ class Database {
       this.data.pdfs.splice(idx, 1);
       // Revoke related assignments
       this.data.assignments.forEach(a => {
-        if (a.pdfId === id) {
+        if (a.pdfId === id || a.pdfId === pdf.id) {
           a.status = 'REVOKED';
         }
       });
       this.save();
       return true;
     }
-    return false;
+    return true;
   }
 
   // --- Assignments & Access Links ---

@@ -1,10 +1,10 @@
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Set up PDF.js worker
+// Set up PDF.js worker matching exact library version
 if (typeof window !== 'undefined') {
   try {
-    // Use unpkg/cdnjs worker fallback for reliable cross-iframe rendering in Vite
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs`;
+    const version = pdfjsLib.version || '6.2.108';
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
   } catch (err) {
     console.warn('PDF.js worker setup fallback:', err);
   }
@@ -22,11 +22,12 @@ export class SecurePdfDocument {
   public totalPages: number = 0;
 
   public async loadFromUrl(url: string, headers: Record<string, string> = {}): Promise<void> {
+    const version = pdfjsLib.version || '6.2.108';
     const loadingTask = pdfjsLib.getDocument({
       url,
       httpHeaders: headers,
       withCredentials: false,
-      cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/cmaps/',
+      cMapUrl: `https://unpkg.com/pdfjs-dist@${version}/cmaps/`,
       cMapPacked: true,
     });
 
@@ -35,9 +36,10 @@ export class SecurePdfDocument {
   }
 
   public async loadFromBuffer(buffer: ArrayBuffer): Promise<void> {
+    const version = pdfjsLib.version || '6.2.108';
     const loadingTask = pdfjsLib.getDocument({
       data: buffer,
-      cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/cmaps/',
+      cMapUrl: `https://unpkg.com/pdfjs-dist@${version}/cmaps/`,
       cMapPacked: true,
     });
 

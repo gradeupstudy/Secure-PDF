@@ -20,6 +20,12 @@ import {
   generateSessionToken 
 } from './security';
 import { ensureStorageDir, initializeDefaultPdfs, getPdfMetadata, getPdfStoragePath } from './pdfWatermark';
+import { 
+  checkSupabaseConnection, 
+  pushAllToSupabase, 
+  pullAllFromSupabase, 
+  SUPABASE_SQL_SCHEMA 
+} from './supabase';
 
 const DB_FILE = path.join(process.cwd(), 'data', 'portal_db.json');
 
@@ -68,7 +74,7 @@ class Database {
     this.init();
   }
 
-  private init() {
+  private async init() {
     ensureStorageDir();
     if (fs.existsSync(DB_FILE)) {
       try {
@@ -76,10 +82,31 @@ class Database {
         this.data = JSON.parse(raw);
       } catch (err) {
         console.error('Error reading db file, seeding fresh:', err);
-        this.seedInitialData();
+        await this.seedInitialData();
       }
     } else {
-      this.seedInitialData();
+      await this.seedInitialData();
+    }
+
+    // Try pulling from Supabase if connected
+    this.tryPullFromSupabase();
+  }
+
+  private async tryPullFromSupabase() {
+    try {
+      const cloudData = await pullAllFromSupabase();
+      if (cloudData && cloudData.students && cloudData.students.length > 0) {
+        console.log(`[Supabase] Loaded ${cloudData.students.length} students & ${cloudData.pdfs?.length || 0} PDFs from cloud database.`);
+        this.data = {
+          ...this.data,
+          ...cloudData,
+          settings: cloudData.settings || this.data.settings,
+        };
+        // Also persist to local cache
+        fs.writeFileSync(DB_FILE, JSON.stringify(this.data, null, 2), 'utf-8');
+      }
+    } catch (err) {
+      console.warn('[Supabase] Could not pull from cloud on startup:', err);
     }
   }
 
@@ -88,6 +115,20 @@ class Database {
       fs.writeFileSync(DB_FILE, JSON.stringify(this.data, null, 2), 'utf-8');
     } catch (err) {
       console.error('Error saving DB:', err);
+    }
+
+    // Asynchronously push to Supabase if configured
+    this.pushToSupabaseAsync();
+  }
+
+  private async pushToSupabaseAsync() {
+    try {
+      const conn = await checkSupabaseConnection();
+      if (conn.configured && conn.connected && conn.tablesReady !== false) {
+        await pushAllToSupabase(this.data);
+      }
+    } catch (err) {
+      // Background sync silently logs without blocking
     }
   }
 
@@ -1122,6 +1163,30 @@ class Database {
     Object.assign(this.data.settings, updates);
     this.save();
     return this.data.settings;
+  }
+
+  public async getSupabaseStatus() {
+    const status = await checkSupabaseConnection();
+    return {
+      ...status,
+      localRecordCounts: {
+        students: this.data.students.length,
+        pdfs: this.data.pdfs.length,
+        assignments: this.data.assignments.length,
+        tokens: this.data.tokens.length,
+        sessions: this.data.sessions.length,
+        printLogs: this.data.printLogs.length,
+        securityEvents: this.data.securityEvents.length,
+      }
+    };
+  }
+
+  public async syncToSupabase() {
+    return await pushAllToSupabase(this.data);
+  }
+
+  public getSupabaseSqlSchema() {
+    return SUPABASE_SQL_SCHEMA;
   }
 }
 

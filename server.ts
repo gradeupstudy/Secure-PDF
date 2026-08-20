@@ -326,6 +326,29 @@ app.put('/api/admin/settings', adminAuthMiddleware, (req, res) => {
   res.json(updated);
 });
 
+// Supabase Cloud Storage Status & Management
+app.get('/api/admin/supabase/status', adminAuthMiddleware, async (req, res) => {
+  try {
+    const status = await db.getSupabaseStatus();
+    res.json(status);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/supabase/sync', adminAuthMiddleware, async (req, res) => {
+  try {
+    const result = await db.syncToSupabase();
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.get('/api/admin/supabase/sql-schema', adminAuthMiddleware, (req, res) => {
+  res.json({ sql: db.getSupabaseSqlSchema() });
+});
+
 // ==========================================
 // 6. STUDENT ACCESS & SECURE VIEWER APIS
 // ==========================================

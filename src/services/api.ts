@@ -227,6 +227,28 @@ export const api = {
     return res.json();
   },
 
+  // --- Supabase Cloud Database Management ---
+  getSupabaseStatus: async () => {
+    const res = await fetch('/api/admin/supabase/status', { headers: adminHeaders() });
+    if (!res.ok) throw new Error('Failed to get Supabase status');
+    return res.json();
+  },
+
+  syncToSupabase: async () => {
+    const res = await fetch('/api/admin/supabase/sync', {
+      method: 'POST',
+      headers: adminHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to synchronize with Supabase');
+    return res.json();
+  },
+
+  getSupabaseSqlSchema: async (): Promise<{ sql: string }> => {
+    const res = await fetch('/api/admin/supabase/sql-schema', { headers: adminHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch SQL Schema');
+    return res.json();
+  },
+
   // --- Student Verification & Access ---
   verifyStudentAccess: async (token: string): Promise<StudentAccessVerification> => {
     const res = await fetch(`/api/access/verify/${encodeURIComponent(token)}`);

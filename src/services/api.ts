@@ -1185,24 +1185,26 @@ export const api = {
     }
 
     // 2. Client-Side Watermarking using the REAL loaded PDF buffer
-    let bufferToWatermark = fallbackPdfBuffer;
-    if (!bufferToWatermark && watermarkOptions?.pdfId) {
+    let bufferToWatermark = fallbackPdfBuffer ? fallbackPdfBuffer.slice(0) : null;
+    
+    if ((!bufferToWatermark || bufferToWatermark.byteLength === 0) && watermarkOptions?.pdfId) {
       try {
-        bufferToWatermark = await getLocalPdfBlob(watermarkOptions.pdfId);
+        const local = await getLocalPdfBlob(watermarkOptions.pdfId);
+        if (local && local.byteLength > 100) bufferToWatermark = local.slice(0);
       } catch {}
     }
 
-    if (!bufferToWatermark) {
+    if (!bufferToWatermark || bufferToWatermark.byteLength === 0) {
       try {
-        const res = await fetch(`/api/access/view-data?sessionId=${encodeURIComponent(sessionId)}&pdfId=${encodeURIComponent(watermarkOptions?.pdfId || '')}`);
+        const res = await fetch(`/api/access/view-data?sessionId=${encodeURIComponent(sessionId)}&pdfId=${encodeURIComponent(watermarkOptions?.pdfId || '')}&token=${encodeURIComponent(watermarkOptions?.token || '')}`);
         if (res.ok) {
           const buf = await res.arrayBuffer();
-          if (buf && buf.byteLength > 100) bufferToWatermark = buf;
+          if (buf && buf.byteLength > 100) bufferToWatermark = buf.slice(0);
         }
       } catch {}
     }
 
-    if (bufferToWatermark && bufferToWatermark.byteLength > 0) {
+    if (bufferToWatermark && bufferToWatermark.byteLength > 100) {
       try {
         const watermarkedBytes = await stampWatermarksOnPdf(bufferToWatermark, {
           brand: 'GRADEUP STUDY',
@@ -1220,7 +1222,7 @@ export const api = {
     }
 
     // 3. Emergency fallback if no buffer was available
-    const { PDFDocument, StandardFonts, rgb, degrees } = await import('pdf-lib');
+    const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
     const pdfDoc = await PDFDocument.create();
     const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
     const fontReg = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -1233,7 +1235,7 @@ export const api = {
       height: 24,
       color: rgb(0.85, 0.12, 0.12),
     });
-    page.drawText(`GRADEUP STUDY SECURE HARD COPY • CANDIDATE: ${(watermarkOptions?.studentName || 'STUDENT').toUpperCase()} • MOB: ${watermarkOptions?.studentMobile || ''}`, {
+    page.drawText(`GRADEUP STUDY SECURE HARD COPY | CANDIDATE: ${(watermarkOptions?.studentName || 'STUDENT').toUpperCase()} | MOB: ${watermarkOptions?.studentMobile || ''}`, {
       x: 20,
       y: 841.89 - 17,
       size: 9,
@@ -1264,13 +1266,12 @@ export const api = {
       color: rgb(0.2, 0.2, 0.2),
     });
 
-    page.drawText('WATERMARK: AUTHORIZED HARD COPY • AUDIT ID: ' + sessionId, {
+    page.drawText('WATERMARK: AUTHORIZED HARD COPY | AUDIT ID: ' + sessionId, {
       x: 60,
       y: 400,
       size: 14,
       font,
       color: rgb(0.7, 0.7, 0.7),
-      rotate: degrees(45),
     });
 
     const pdfBytes = await pdfDoc.save();

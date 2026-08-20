@@ -55,6 +55,7 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
   const [printLimit] = useState<number>(verificationData.assignment?.printLimit || 3);
   const [allowPrint] = useState<boolean>(verificationData.assignment?.allowPrint ?? true);
   const [isPrinting, setIsPrinting] = useState<boolean>(false);
+  const [isPrintConfirmModalOpen, setIsPrintConfirmModalOpen] = useState<boolean>(false);
   const [printStatusMessage, setPrintStatusMessage] = useState<string | null>(null);
   const [printErrorMessage, setPrintErrorMessage] = useState<string | null>(null);
 
@@ -218,9 +219,9 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
       if (res.ok) {
         const buffer = await res.arrayBuffer();
         if (buffer && buffer.byteLength > 100) {
-          loadedPdfBufferRef.current = buffer;
+          loadedPdfBufferRef.current = buffer.slice(0);
           const doc = new SecurePdfDocument();
-          await doc.loadFromBuffer(buffer);
+          await doc.loadFromBuffer(buffer.slice(0));
           pdfDocRef.current = doc;
           setTotalPages(doc.totalPages);
           setPdfLoading(false);
@@ -238,9 +239,9 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
         (verificationData.pdf?.fileName ? await getLocalPdfBlob(verificationData.pdf.fileName) : null);
 
       if (localBlob && localBlob.byteLength > 100) {
-        loadedPdfBufferRef.current = localBlob;
+        loadedPdfBufferRef.current = localBlob.slice(0);
         const doc = new SecurePdfDocument();
-        await doc.loadFromBuffer(localBlob);
+        await doc.loadFromBuffer(localBlob.slice(0));
         pdfDocRef.current = doc;
         setTotalPages(doc.totalPages);
         setPdfLoading(false);
@@ -260,9 +261,9 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
           const { data: fileBlob } = await sb.storage.from('pdfs').download(filePath);
           if (fileBlob) {
             const buffer = await fileBlob.arrayBuffer();
-            loadedPdfBufferRef.current = buffer;
+            loadedPdfBufferRef.current = buffer.slice(0);
             const doc = new SecurePdfDocument();
-            await doc.loadFromBuffer(buffer);
+            await doc.loadFromBuffer(buffer.slice(0));
             pdfDocRef.current = doc;
             setTotalPages(doc.totalPages);
             setPdfLoading(false);
@@ -334,9 +335,9 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
       }
 
       const pdfBytes = await pdfDoc.save();
-      loadedPdfBufferRef.current = pdfBytes.buffer;
+      loadedPdfBufferRef.current = pdfBytes.buffer.slice(0);
       const doc = new SecurePdfDocument();
-      await doc.loadFromBuffer(pdfBytes.buffer);
+      await doc.loadFromBuffer(pdfBytes.buffer.slice(0));
       pdfDocRef.current = doc;
       setTotalPages(doc.totalPages);
       setPdfLoading(false);
@@ -621,7 +622,13 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
 
                 <button
                   id="btn-controlled-print"
-                  onClick={handleControlledPrint}
+                  onClick={() => {
+                    if (printLimit > 0 && printCount >= printLimit) {
+                      alert(`Print limit reached (${printCount}/${printLimit} copies already printed).`);
+                      return;
+                    }
+                    setIsPrintConfirmModalOpen(true);
+                  }}
                   disabled={isPrinting || (printLimit > 0 && printCount >= printLimit)}
                   className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold shadow-lg transition active:scale-95 ${
                     printLimit > 0 && printCount >= printLimit
@@ -800,6 +807,130 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
           </button>
         </div>
       </div>
+
+      {/* 6. PRINT CONFIRMATION & SECURITY ADVISORY MODAL */}
+      {isPrintConfirmModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <div className="flex items-center space-x-3">
+                <div className="h-10 w-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                  <Printer className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white tracking-tight">
+                    Authorized Document Printing
+                  </h3>
+                  <p className="text-xs text-slate-400">Gradeup Study Security Verification</p>
+                </div>
+              </div>
+              <button
+                onClick={() => !isPrinting && setIsPrintConfirmModalOpen(false)}
+                disabled={isPrinting}
+                className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Document & Candidate Credentials */}
+            <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 space-y-3 text-xs">
+              <div className="flex justify-between items-center pb-2 border-b border-slate-800/80">
+                <span className="text-slate-400">Document Title:</span>
+                <span className="font-bold text-slate-200 truncate max-w-[240px]">
+                  {verificationData.pdf?.title || 'Gradeup Study Material'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">Total Document Pages:</span>
+                <span className="font-bold text-indigo-300">{totalPages} Pages</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">Licensed Candidate:</span>
+                <span className="font-bold text-white">{verificationData.student?.name || 'Registered Student'}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">Registered Mobile:</span>
+                <span className="font-mono text-emerald-400 font-bold">{verificationData.student?.mobile || 'N/A'}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">Print Quota Status:</span>
+                <span className="font-bold text-amber-400">
+                  {printLimit > 0 ? `Copy ${printCount + 1} of ${printLimit}` : 'Unlimited Access'}
+                </span>
+              </div>
+            </div>
+
+            {/* Important Guidance regarding Physical Printing vs Save as PDF */}
+            <div className="bg-amber-950/30 border border-amber-800/40 rounded-xl p-3.5 space-y-2 text-[11px] text-amber-200/90 leading-relaxed">
+              <div className="flex items-center space-x-1.5 font-bold text-amber-300">
+                <ShieldCheck className="h-4 w-4 shrink-0" />
+                <span>Printing Instructions & Anti-Piracy Warning</span>
+              </div>
+              <p>
+                1. <strong>Select Physical Printer:</strong> In the next print window, select your connected printer (e.g. Canon, HP, Epson).
+              </p>
+              <p>
+                2. <strong>Indelible Watermarks:</strong> Every single page of this <strong>{totalPages}-page</strong> document is stamped with your personal Candidate Name, Mobile Number, and Timestamp.
+              </p>
+              <p className="text-[10px] text-amber-300/80 italic">
+                * Note: Standard browser print dialogs may show "Save as PDF" in the destination list, but all exported copies remain permanently watermarked and traceable.
+              </p>
+            </div>
+
+            {/* Status or Error Notice */}
+            {printStatusMessage && (
+              <div className="p-3 rounded-lg bg-indigo-950/60 border border-indigo-800/60 text-indigo-300 text-xs flex items-center space-x-2">
+                <Loader2 className="h-4 w-4 animate-spin text-indigo-400 shrink-0" />
+                <span>{printStatusMessage}</span>
+              </div>
+            )}
+
+            {printErrorMessage && (
+              <div className="p-3 rounded-lg bg-rose-950/60 border border-rose-800/60 text-rose-300 text-xs flex items-center space-x-2">
+                <AlertTriangle className="h-4 w-4 text-rose-400 shrink-0" />
+                <span>{printErrorMessage}</span>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-end space-x-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsPrintConfirmModalOpen(false)}
+                disabled={isPrinting}
+                className="px-4 py-2 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  await handleControlledPrint();
+                  setTimeout(() => {
+                    setIsPrintConfirmModalOpen(false);
+                  }, 1500);
+                }}
+                disabled={isPrinting}
+                className="px-5 py-2.5 text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 rounded-xl shadow-lg shadow-amber-950/40 flex items-center space-x-2 transition active:scale-95 disabled:opacity-50"
+              >
+                {isPrinting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Preparing {totalPages} Pages...</span>
+                  </>
+                ) : (
+                  <>
+                    <Printer className="h-4 w-4" />
+                    <span>Proceed to Print ({totalPages} Pages)</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

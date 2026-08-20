@@ -230,7 +230,7 @@ class Database {
     const assign1: Assignment = {
       id: 'asg_demo_01',
       studentId: 'std_rahul_kumar',
-      pdfId: 'pdf_hp_police_01',
+      pdfId: 'pdf-hp-police-01',
       status: 'ACTIVE',
       allowPrint: true,
       printLimit: 3,
@@ -261,7 +261,7 @@ class Database {
     const assign2: Assignment = {
       id: 'asg_demo_02',
       studentId: 'std_priya_sharma',
-      pdfId: 'pdf_hp_patwari_02',
+      pdfId: 'pdf-hp-patwari-01',
       status: 'ACTIVE',
       allowPrint: true,
       printLimit: 2,

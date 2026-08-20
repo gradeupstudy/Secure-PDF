@@ -315,6 +315,18 @@ async function generateMockPdfFile(filePath: string, title: string, description:
   fs.writeFileSync(filePath, pdfBytes);
 }
 
+function sanitizeForPdfText(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/[•●·]/g, '|')
+    .replace(/[–—]/g, '-')
+    .replace(/[""]/g, '"')
+    .replace(/['']/g, "'")
+    .replace(/[^\x20-\x7E]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /**
  * Dynamically stamps indelible Gradeup Study student-specific watermarks onto every page for controlled printing.
  */
@@ -330,11 +342,17 @@ export async function generateWatermarkedPrintPdf(
   }
 ): Promise<Buffer> {
   const existingPdfBytes = fs.readFileSync(inputPdfPath);
-  const pdfDoc = await PDFDocument.load(existingPdfBytes);
+  const pdfDoc = await PDFDocument.load(existingPdfBytes, { ignoreEncryption: true });
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
   const pages = pdfDoc.getPages();
+  const cleanStudentName = sanitizeForPdfText(watermark.studentName || 'STUDENT').toUpperCase();
+  const cleanMobile = sanitizeForPdfText(watermark.studentMobile || '');
+  const cleanEmail = sanitizeForPdfText(watermark.studentEmail || '');
+  const cleanAccessId = sanitizeForPdfText(watermark.accessId || 'GS-SECURE');
+  const cleanSessionId = sanitizeForPdfText(watermark.sessionId || 'SESS').slice(-8).toUpperCase();
+  const cleanTimestamp = sanitizeForPdfText(watermark.printTimestamp || new Date().toLocaleString('en-IN'));
 
   for (let idx = 0; idx < pages.length; idx++) {
     const page = pages[idx];
@@ -351,7 +369,7 @@ export async function generateWatermarkedPrintPdf(
     });
 
     page.drawText(
-      `GRADEUP STUDY PRINTED COPY  •  STUDENT: ${watermark.studentName.toUpperCase()}  •  MOB: ${watermark.studentMobile}  •  ${watermark.printTimestamp}`,
+      `GRADEUP STUDY PRINTED COPY | STUDENT: ${cleanStudentName} | MOB: ${cleanMobile} | ${cleanTimestamp}`,
       {
         x: 15,
         y: height - 13,
@@ -364,17 +382,15 @@ export async function generateWatermarkedPrintPdf(
     // 2. Diagonal Multi-line Repeating Watermark Grid
     const diagonalTextLines = [
       'GRADEUP STUDY SECURE PORTAL',
-      `LICENSED TO: ${watermark.studentName}`,
-      `MOBILE: ${watermark.studentMobile} | EMAIL: ${watermark.studentEmail}`,
-      `ACCESS ID: ${watermark.accessId} | SESSION: ${watermark.sessionId}`,
-      `PRINTED ON: ${watermark.printTimestamp}`,
+      `LICENSED TO: ${cleanStudentName}`,
+      `MOBILE: ${cleanMobile} | EMAIL: ${cleanEmail}`,
+      `ACCESS ID: ${cleanAccessId} | SESSION: ${cleanSessionId}`,
+      `PRINTED ON: ${cleanTimestamp}`,
     ];
 
     // Stamp repeating diagonal watermarks
     const yOffsets = [height * 0.72, height * 0.45, height * 0.18];
     for (const baseY of yOffsets) {
-      page.pushOperators();
-      
       let lineY = baseY;
       for (const line of diagonalTextLines) {
         page.drawText(line, {
@@ -401,7 +417,7 @@ export async function generateWatermarkedPrintPdf(
     });
 
     page.drawText(
-      `Authorized Print Copy #${idx + 1}/${pages.length} • Gradeup Study Security Hash: ${watermark.accessId}-${watermark.sessionId.slice(-6)} • Personal Use Only`,
+      `Authorized Print Copy #${idx + 1}/${pages.length} | Security Hash: ${cleanAccessId}-${cleanSessionId.slice(-6)} | Personal Use Only`,
       {
         x: 15,
         y: 4,

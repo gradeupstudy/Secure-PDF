@@ -37,8 +37,10 @@ export class SecurePdfDocument {
 
   public async loadFromBuffer(buffer: ArrayBuffer): Promise<void> {
     const version = pdfjsLib.version || '6.2.108';
+    // Clone buffer data to uint8array so worker thread transfer cannot detach caller's ArrayBuffer
+    const safeData = new Uint8Array(buffer.slice(0));
     const loadingTask = pdfjsLib.getDocument({
-      data: buffer,
+      data: safeData,
       cMapUrl: `https://unpkg.com/pdfjs-dist@${version}/cmaps/`,
       cMapPacked: true,
     });

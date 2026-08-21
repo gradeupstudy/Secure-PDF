@@ -154,6 +154,33 @@ export interface OverviewStats {
   recentPrintLogs: PrintLog[];
 }
 
+export interface WatermarkConfig {
+  brandText: string;
+  fontSize: number; // e.g. 18 - 26 (Large & clearly visible)
+  opacity: number; // e.g. 0.32 (0.15 - 0.65)
+  color: 'crimson' | 'red' | 'navy' | 'charcoal' | 'darkblue';
+  density: 'single' | 'triple' | 'dense';
+  angle: number; // e.g. 32
+  showTopBanner: boolean;
+  showBottomFooter: boolean;
+  showStudentName: boolean;
+  showStudentMobile: boolean;
+  showStudentEmail: boolean;
+  showAuditId: boolean;
+  showTimestamp: boolean;
+}
+
+export interface SystemSettings {
+  brandName: string;
+  supportEmail: string;
+  supportPhone: string;
+  allowWatermarkMicroshift: boolean;
+  defaultPrintLimit: number;
+  maxSessionDurationMinutes: number;
+  requireFocusShield: boolean;
+  watermark?: WatermarkConfig;
+}
+
 export interface StudentAccessVerification {
   valid: boolean;
   error?: 'INVALID_TOKEN' | 'REVOKED' | 'EXPIRED' | 'PDF_DISABLED' | 'SESSION_TERMINATED' | 'DEVICE_LIMIT_EXCEEDED' | 'RATE_LIMITED';

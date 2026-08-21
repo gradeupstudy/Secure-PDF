@@ -58,13 +58,30 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
   const [isPrintConfirmModalOpen, setIsPrintConfirmModalOpen] = useState<boolean>(false);
   const [printStatusMessage, setPrintStatusMessage] = useState<string | null>(null);
   const [printErrorMessage, setPrintErrorMessage] = useState<string | null>(null);
+  const [activePrintUrl, setActivePrintUrl] = useState<string | null>(null);
+  const [printHelperBannerVisible, setPrintHelperBannerVisible] = useState<boolean>(false);
 
-  // Canvas Refs
+  // Canvas Refs & Print Refs
   const canvasRefs = useRef<{ [key: number]: HTMLCanvasElement | null }>({});
   const containerRef = useRef<HTMLDivElement | null>(null);
   const pdfDocRef = useRef<SecurePdfDocument | null>(null);
   const loadedPdfBufferRef = useRef<ArrayBuffer | null>(null);
+  const activeBlobUrlRef = useRef<string | null>(null);
   const sessionId = verificationData.session?.id || '';
+
+  // Cleanup active print blob URL on unmount
+  useEffect(() => {
+    return () => {
+      if (activeBlobUrlRef.current) {
+        URL.revokeObjectURL(activeBlobUrlRef.current);
+        activeBlobUrlRef.current = null;
+      }
+      const existingFrame = document.getElementById('gs-secure-print-frame');
+      if (existingFrame && document.body.contains(existingFrame)) {
+        document.body.removeChild(existingFrame);
+      }
+    };
+  }, []);
 
   // 1. Dynamic Watermark Micro-Shifting (every 8 seconds to deter static mask subtraction)
   useEffect(() => {
@@ -169,8 +186,11 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
     };
 
     const handleWindowBlur = () => {
-      setIsFocusShieldActive(true);
-      api.logSecurityEvent(sessionId, 'VISIBILITY_FOCUS_LOST', { action: 'blur' });
+      // Avoid intrusive masking if active print dialog is currently open
+      if (!isPrinting && !printHelperBannerVisible) {
+        setIsFocusShieldActive(true);
+        api.logSecurityEvent(sessionId, 'VISIBILITY_FOCUS_LOST', { action: 'blur' });
+      }
     };
 
     const handleWindowFocus = () => {
@@ -188,7 +208,7 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
       window.removeEventListener('blur', handleWindowBlur);
       window.removeEventListener('focus', handleWindowFocus);
     };
-  }, [sessionId]);
+  }, [sessionId, isPrinting, printHelperBannerVisible]);
 
   const triggerScreenshotShield = (message: string) => {
     setScreenshotWarningVisible(true);
@@ -400,7 +420,7 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
     }
 
     setIsPrinting(true);
-    setPrintStatusMessage('Stamping student watermarks across all pages of the document...');
+    setPrintStatusMessage('Stamping candidate watermarks on every page of document...');
     setPrintErrorMessage(null);
 
     try {
@@ -428,7 +448,7 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
         }
       );
 
-      setPrintStatusMessage('Stamp generated. Launching print dialog...');
+      setPrintStatusMessage('Watermark stamp generated. Opening print dialog...');
       setPrintCount(prev => prev + 1);
 
       api.logSecurityEvent(sessionId, 'AUTHORIZED_PRINT_TRIGGERED', {
@@ -437,56 +457,91 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
         timestamp: new Date().toISOString()
       });
 
-      // 2. Create temporary object URL for print iframe
+      // Revoke previous blob url if active
+      if (activeBlobUrlRef.current) {
+        try {
+          URL.revokeObjectURL(activeBlobUrlRef.current);
+        } catch {}
+      }
+
+      // 2. Create persistent object URL for the active print session
       const blobUrl = URL.createObjectURL(blob);
-      const printIframe = document.createElement('iframe');
-      printIframe.style.position = 'fixed';
-      printIframe.style.right = '0';
-      printIframe.style.bottom = '0';
-      printIframe.style.width = '0';
-      printIframe.style.height = '0';
-      printIframe.style.border = '0';
-      printIframe.src = blobUrl;
+      activeBlobUrlRef.current = blobUrl;
+      setActivePrintUrl(blobUrl);
+      setPrintHelperBannerVisible(true);
 
-      document.body.appendChild(printIframe);
+      // 3. Get or create persistent hidden print iframe in DOM (DO NOT destroy on timer!)
+      let printIframe = document.getElementById('gs-secure-print-frame') as HTMLIFrameElement;
+      if (!printIframe) {
+        printIframe = document.createElement('iframe');
+        printIframe.id = 'gs-secure-print-frame';
+        printIframe.style.position = 'fixed';
+        printIframe.style.right = '0';
+        printIframe.style.bottom = '0';
+        printIframe.style.width = '0';
+        printIframe.style.height = '0';
+        printIframe.style.border = '0';
+        printIframe.style.visibility = 'hidden';
+        document.body.appendChild(printIframe);
+      }
 
-      let printTriggered = false;
-      const triggerPrint = () => {
-        if (printTriggered) return;
-        printTriggered = true;
+      let printDispatched = false;
+      const dispatchPrint = () => {
+        if (printDispatched) return;
+        printDispatched = true;
+
         try {
           printIframe.contentWindow?.focus();
           printIframe.contentWindow?.print();
         } catch (err) {
-          console.warn('Iframe print failed, opening print helper:', err);
+          console.warn('Iframe print call error, opening window helper:', err);
           window.open(blobUrl, '_blank');
-        } finally {
-          setTimeout(() => {
-            if (document.body.contains(printIframe)) {
-              document.body.removeChild(printIframe);
-            }
-            URL.revokeObjectURL(blobUrl);
-            setIsPrinting(false);
-            setPrintStatusMessage(null);
-          }, 4000);
         }
+
+        // Keep UI reactive, but keep iframe and blobUrl intact so browser doesn't dismiss dialog
+        setIsPrinting(false);
+        setPrintStatusMessage(null);
       };
+
+      // Set afterprint listeners to clean up status cleanly when user completes or cancels print
+      const handleAfterPrint = () => {
+        setIsPrinting(false);
+        setPrintStatusMessage(null);
+      };
+      window.addEventListener('afterprint', handleAfterPrint, { once: true });
+      try {
+        printIframe.contentWindow?.addEventListener('afterprint', handleAfterPrint, { once: true });
+      } catch {}
 
       printIframe.onload = () => {
-        setTimeout(triggerPrint, 600);
+        setTimeout(dispatchPrint, 400);
       };
 
-      // Fallback timer in case iframe.onload does not fire in certain browser configurations
+      // Fallback trigger if onload already occurred or was cached
       setTimeout(() => {
-        if (!printTriggered) {
-          triggerPrint();
+        if (!printDispatched) {
+          dispatchPrint();
         }
-      }, 2000);
+      }, 1200);
+
+      printIframe.src = blobUrl;
 
     } catch (err: any) {
       console.error('Print failed:', err);
       setPrintErrorMessage(err.message || 'Print authorization failed.');
       setIsPrinting(false);
+      setPrintStatusMessage(null);
+    }
+  };
+
+  const handleOpenDedicatedPrintWindow = () => {
+    if (activePrintUrl) {
+      const printWin = window.open(activePrintUrl, '_blank');
+      if (printWin) {
+        printWin.focus();
+      }
+    } else {
+      handleControlledPrint();
     }
   };
 
@@ -679,6 +734,33 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
           Anti-Copy & Visibility Guard Active • Gradeup Study Secure Platform
         </div>
       </div>
+
+      {/* PRINT HELPER STATUS BANNER */}
+      {printHelperBannerVisible && activePrintUrl && (
+        <div className="bg-gradient-to-r from-amber-950/90 via-slate-900 to-indigo-950/90 border-b border-amber-500/30 px-4 py-2 text-xs flex flex-wrap items-center justify-between gap-2 z-20">
+          <div className="flex items-center space-x-2 text-amber-200">
+            <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+            <span>
+              Authorized watermarked copy ready for <strong>{watermark.studentName}</strong> ({totalPages} Pages).
+            </span>
+          </div>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={handleOpenDedicatedPrintWindow}
+              className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-[11px] flex items-center space-x-1.5 transition active:scale-95 shadow-md"
+            >
+              <Printer className="h-3.5 w-3.5" />
+              <span>Re-open Print Window</span>
+            </button>
+            <button
+              onClick={() => setPrintHelperBannerVisible(false)}
+              className="px-2 py-1 text-slate-400 hover:text-slate-200 text-[11px] rounded"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 3. SCREENSHOT DETECTED / WARNING BANNER */}
       {screenshotWarningVisible && (
@@ -907,10 +989,8 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
               <button
                 type="button"
                 onClick={async () => {
+                  setIsPrintConfirmModalOpen(false);
                   await handleControlledPrint();
-                  setTimeout(() => {
-                    setIsPrintConfirmModalOpen(false);
-                  }, 1500);
                 }}
                 disabled={isPrinting}
                 className="px-5 py-2.5 text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 rounded-xl shadow-lg shadow-amber-950/40 flex items-center space-x-2 transition active:scale-95 disabled:opacity-50"

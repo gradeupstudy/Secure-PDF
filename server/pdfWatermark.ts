@@ -328,7 +328,8 @@ function sanitizeForPdfText(str: string): string {
 }
 
 /**
- * Dynamically stamps indelible Gradeup Study student-specific watermarks onto every page for controlled printing.
+ * Dynamically stamps indelible student-specific watermarks onto every page for controlled printing.
+ * Enhanced with large font size, high-contrast deterrence, and configurable admin settings.
  */
 export async function generateWatermarkedPrintPdf(
   inputPdfPath: string,
@@ -339,6 +340,21 @@ export async function generateWatermarkedPrintPdf(
     accessId: string;
     sessionId: string;
     printTimestamp: string;
+  },
+  config?: {
+    brandText?: string;
+    fontSize?: number;
+    opacity?: number;
+    color?: string;
+    density?: 'single' | 'triple' | 'dense';
+    angle?: number;
+    showTopBanner?: boolean;
+    showBottomFooter?: boolean;
+    showStudentName?: boolean;
+    showStudentMobile?: boolean;
+    showStudentEmail?: boolean;
+    showAuditId?: boolean;
+    showTimestamp?: boolean;
   }
 ): Promise<Buffer> {
   const existingPdfBytes = fs.readFileSync(inputPdfPath);
@@ -347,6 +363,7 @@ export async function generateWatermarkedPrintPdf(
   const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
   const pages = pdfDoc.getPages();
+  const brandText = sanitizeForPdfText(config?.brandText || 'GRADEUP STUDY • CONFIDENTIAL').toUpperCase();
   const cleanStudentName = sanitizeForPdfText(watermark.studentName || 'STUDENT').toUpperCase();
   const cleanMobile = sanitizeForPdfText(watermark.studentMobile || '');
   const cleanEmail = sanitizeForPdfText(watermark.studentEmail || '');
@@ -354,78 +371,125 @@ export async function generateWatermarkedPrintPdf(
   const cleanSessionId = sanitizeForPdfText(watermark.sessionId || 'SESS').slice(-8).toUpperCase();
   const cleanTimestamp = sanitizeForPdfText(watermark.printTimestamp || new Date().toLocaleString('en-IN'));
 
+  // Configuration options
+  const baseFontSize = config?.fontSize && config.fontSize >= 12 ? config.fontSize : 18; // Default 18 (much larger than previous 11)
+  const watermarkOpacity = typeof config?.opacity === 'number' ? Math.max(0.12, Math.min(0.70, config.opacity)) : 0.32; // Default 0.32 for clear print visibility
+  const angleDeg = typeof config?.angle === 'number' ? config.angle : 32;
+  const density = config?.density || 'triple';
+  const showTopBanner = config?.showTopBanner !== false;
+  const showBottomFooter = config?.showBottomFooter !== false;
+
+  // Resolve color RGB
+  let textColor = rgb(0.78, 0.08, 0.08); // crimson default
+  let bannerColor = rgb(0.85, 0.12, 0.12);
+  if (config?.color === 'red') {
+    textColor = rgb(0.85, 0.1, 0.1);
+    bannerColor = rgb(0.9, 0.1, 0.1);
+  } else if (config?.color === 'navy' || config?.color === 'darkblue') {
+    textColor = rgb(0.08, 0.18, 0.45);
+    bannerColor = rgb(0.08, 0.18, 0.45);
+  } else if (config?.color === 'charcoal') {
+    textColor = rgb(0.2, 0.25, 0.3);
+    bannerColor = rgb(0.15, 0.2, 0.25);
+  }
+
   for (let idx = 0; idx < pages.length; idx++) {
     const page = pages[idx];
     const { width, height } = page.getSize();
 
-    // 1. Top Security Watermark Header Strip
-    page.drawRectangle({
-      x: 0,
-      y: height - 18,
-      width: width,
-      height: 18,
-      color: rgb(0.9, 0.1, 0.1),
-      opacity: 0.9,
-    });
+    // 1. Top Security Watermark Header Strip (Red/Navy Background)
+    if (showTopBanner) {
+      page.drawRectangle({
+        x: 0,
+        y: height - 22,
+        width: width,
+        height: 22,
+        color: bannerColor,
+        opacity: 0.95,
+      });
 
-    page.drawText(
-      `GRADEUP STUDY PRINTED COPY | STUDENT: ${cleanStudentName} | MOB: ${cleanMobile} | ${cleanTimestamp}`,
-      {
+      const headerText = `${brandText} | CANDIDATE: ${cleanStudentName}${cleanMobile ? ` | MOB: ${cleanMobile}` : ''} | ${cleanTimestamp}`;
+      page.drawText(headerText, {
         x: 15,
-        y: height - 13,
-        size: 7.5,
+        y: height - 16,
+        size: Math.min(9, width / 55),
         font: fontBold,
         color: rgb(1, 1, 1),
-      }
-    );
+      });
+    }
 
-    // 2. Diagonal Multi-line Repeating Watermark Grid
-    const diagonalTextLines = [
-      'GRADEUP STUDY SECURE PORTAL',
-      `LICENSED TO: ${cleanStudentName}`,
-      `MOBILE: ${cleanMobile} | EMAIL: ${cleanEmail}`,
-      `ACCESS ID: ${cleanAccessId} | SESSION: ${cleanSessionId}`,
-      `PRINTED ON: ${cleanTimestamp}`,
-    ];
+    // 2. Build Multi-line Diagonal Watermark Blocks
+    const diagonalTextLines: { text: string; size: number; bold: boolean; extraSpacing?: number }[] = [];
+
+    if (brandText) {
+      diagonalTextLines.push({ text: brandText, size: baseFontSize * 1.05, bold: true });
+    }
+
+    if (config?.showStudentName !== false) {
+      diagonalTextLines.push({ text: `LICENSED TO: ${cleanStudentName}`, size: baseFontSize * 1.15, bold: true });
+    }
+
+    const contactParts: string[] = [];
+    if (config?.showStudentMobile !== false && cleanMobile) contactParts.push(`MOB: ${cleanMobile}`);
+    if (config?.showStudentEmail !== false && cleanEmail) contactParts.push(`EMAIL: ${cleanEmail}`);
+    if (contactParts.length > 0) {
+      diagonalTextLines.push({ text: contactParts.join(' | '), size: baseFontSize * 0.85, bold: true });
+    }
+
+    const trackingParts: string[] = [];
+    if (config?.showAuditId !== false) trackingParts.push(`ACCESS: ${cleanAccessId} | SESS: ${cleanSessionId}`);
+    if (config?.showTimestamp !== false) trackingParts.push(cleanTimestamp);
+    if (trackingParts.length > 0) {
+      diagonalTextLines.push({ text: trackingParts.join(' | '), size: baseFontSize * 0.75, bold: false });
+    }
+
+    // Determine Y offsets based on density
+    let yOffsets = [height * 0.72, height * 0.46, height * 0.20];
+    if (density === 'single') {
+      yOffsets = [height * 0.48];
+    } else if (density === 'dense') {
+      yOffsets = [height * 0.82, height * 0.62, height * 0.42, height * 0.24, height * 0.08];
+    }
 
     // Stamp repeating diagonal watermarks
-    const yOffsets = [height * 0.72, height * 0.45, height * 0.18];
     for (const baseY of yOffsets) {
       let lineY = baseY;
-      for (const line of diagonalTextLines) {
-        page.drawText(line, {
-          x: width * 0.12,
+      for (const item of diagonalTextLines) {
+        page.drawText(item.text, {
+          x: width * 0.06,
           y: lineY,
-          size: 11,
-          font: fontBold,
-          color: rgb(0.72, 0.05, 0.05),
-          opacity: 0.18,
-          rotate: degrees(32),
+          size: item.size,
+          font: item.bold ? fontBold : fontRegular,
+          color: textColor,
+          opacity: watermarkOpacity,
+          rotate: degrees(angleDeg),
         });
-        lineY -= 14;
+        lineY -= (item.size * 1.25 + 4);
       }
     }
 
-    // 3. Bottom Verification Stamp
-    page.drawRectangle({
-      x: 0,
-      y: 0,
-      width: width,
-      height: 16,
-      color: rgb(0.1, 0.15, 0.25),
-      opacity: 0.85,
-    });
+    // 3. Bottom Verification Audit Stamp
+    if (showBottomFooter) {
+      page.drawRectangle({
+        x: 0,
+        y: 0,
+        width: width,
+        height: 18,
+        color: rgb(0.08, 0.12, 0.22),
+        opacity: 0.9,
+      });
 
-    page.drawText(
-      `Authorized Print Copy #${idx + 1}/${pages.length} | Security Hash: ${cleanAccessId}-${cleanSessionId.slice(-6)} | Personal Use Only`,
-      {
-        x: 15,
-        y: 4,
-        size: 7,
-        font: fontRegular,
-        color: rgb(0.9, 0.92, 0.95),
-      }
-    );
+      page.drawText(
+        `Authorized Hard Copy #${idx + 1}/${pages.length} | Security Hash: ${cleanAccessId}-${cleanSessionId} | Strictly Personal License`,
+        {
+          x: 15,
+          y: 5,
+          size: Math.min(8, width / 60),
+          font: fontRegular,
+          color: rgb(0.9, 0.93, 0.98),
+        }
+      );
+    }
   }
 
   const outputBytes = await pdfDoc.save();

@@ -10,7 +10,9 @@ import {
   SecurityEvent, 
   AuditLog, 
   OverviewStats,
-  LinkStatus
+  LinkStatus,
+  WatermarkConfig,
+  SystemSettings
 } from '../src/types';
 import { 
   generateSecureAccessToken, 
@@ -39,16 +41,24 @@ interface DatabaseSchema {
   printLogs: PrintLog[];
   securityEvents: SecurityEvent[];
   auditLogs: AuditLog[];
-  settings: {
-    brandName: string;
-    supportEmail: string;
-    supportPhone: string;
-    allowWatermarkMicroshift: boolean;
-    defaultPrintLimit: number;
-    maxSessionDurationMinutes: number;
-    requireFocusShield: boolean;
-  };
+  settings: SystemSettings;
 }
+
+const DEFAULT_WATERMARK_CONFIG: WatermarkConfig = {
+  brandText: 'GRADEUP STUDY • CONFIDENTIAL',
+  fontSize: 20, // Large, high visibility for print
+  opacity: 0.32, // Strong visibility on printed sheet without obstructing questions
+  color: 'crimson',
+  density: 'triple',
+  angle: 32,
+  showTopBanner: true,
+  showBottomFooter: true,
+  showStudentName: true,
+  showStudentMobile: true,
+  showStudentEmail: true,
+  showAuditId: true,
+  showTimestamp: true,
+};
 
 class Database {
   private data: DatabaseSchema = {
@@ -68,6 +78,7 @@ class Database {
       defaultPrintLimit: 3,
       maxSessionDurationMinutes: 120,
       requireFocusShield: true,
+      watermark: DEFAULT_WATERMARK_CONFIG,
     }
   };
 
@@ -1178,11 +1189,21 @@ class Database {
     };
   }
 
-  public getSettings() {
+  public getSettings(): SystemSettings {
+    if (!this.data.settings.watermark) {
+      this.data.settings.watermark = { ...DEFAULT_WATERMARK_CONFIG };
+    }
     return this.data.settings;
   }
 
-  public updateSettings(updates: Partial<DatabaseSchema['settings']>) {
+  public updateSettings(updates: Partial<SystemSettings>) {
+    if (updates.watermark) {
+      this.data.settings.watermark = {
+        ...(this.data.settings.watermark || DEFAULT_WATERMARK_CONFIG),
+        ...updates.watermark,
+      };
+      delete updates.watermark;
+    }
     Object.assign(this.data.settings, updates);
     this.save();
     return this.data.settings;

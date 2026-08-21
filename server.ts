@@ -414,45 +414,49 @@ app.get('/api/access/verify/:token', (req, res) => {
     hour12: true
   });
 
-  // Return sanitized verification payload
-  res.json({
-    valid: true,
-    assignment: {
-      id: result.assignment.id,
-      status: result.assignment.status,
-      allowPrint: result.assignment.allowPrint,
-      printLimit: result.assignment.printLimit,
-      printCount: result.assignment.printCount,
-      expiresAt: result.assignment.expiresAt,
-    },
-    student: {
-      id: result.student.id,
-      name: result.student.name,
-      mobile: maskMobile(result.student.mobile),
-      rawMobile: result.student.mobile,
-      email: result.student.email,
-    },
-    pdf: {
-      id: result.pdf.id,
-      title: result.pdf.title,
-      pageCount: result.pdf.pageCount,
-      fileSize: result.pdf.fileSize,
-    },
-    session: {
-      id: result.session.id,
-      token: result.session.sessionToken,
-      expiresAt: result.session.expiresAt,
-    },
-    watermarkData: {
-      brand: 'GRADEUP STUDY',
-      studentName: result.student.name,
-      studentMobile: result.student.mobile,
-      studentEmail: result.student.email,
-      accessId: 'GS-' + result.assignment.id.slice(-6).toUpperCase(),
-      sessionId: result.session.id.slice(-6).toUpperCase(),
-      timestamp: nowFormatted,
-    }
-  });
+    const sysSettings = db.getSettings();
+    const wmConfig = sysSettings.watermark;
+
+    // Return sanitized verification payload
+    res.json({
+      valid: true,
+      assignment: {
+        id: result.assignment.id,
+        status: result.assignment.status,
+        allowPrint: result.assignment.allowPrint,
+        printLimit: result.assignment.printLimit,
+        printCount: result.assignment.printCount,
+        expiresAt: result.assignment.expiresAt,
+      },
+      student: {
+        id: result.student.id,
+        name: result.student.name,
+        mobile: maskMobile(result.student.mobile),
+        rawMobile: result.student.mobile,
+        email: result.student.email,
+      },
+      pdf: {
+        id: result.pdf.id,
+        title: result.pdf.title,
+        pageCount: result.pdf.pageCount,
+        fileSize: result.pdf.fileSize,
+      },
+      session: {
+        id: result.session.id,
+        token: result.session.sessionToken,
+        expiresAt: result.session.expiresAt,
+      },
+      watermarkData: {
+        brand: wmConfig?.brandText || 'GRADEUP STUDY • CONFIDENTIAL',
+        studentName: result.student.name,
+        studentMobile: result.student.mobile,
+        studentEmail: result.student.email,
+        accessId: 'GS-' + result.assignment.id.slice(-6).toUpperCase(),
+        sessionId: result.session.id.slice(-6).toUpperCase(),
+        timestamp: nowFormatted,
+        config: wmConfig,
+      }
+    });
 });
 
 // Secure PDF Binary Stream for Viewer
@@ -615,15 +619,21 @@ app.post('/api/access/print-request', async (req, res) => {
       hour12: true
     });
 
-    // Generate stamped watermarked PDF in memory
-    const watermarkedBuffer = await generateWatermarkedPrintPdf(fullPdfPath, {
-      studentName: authResult.student.name,
-      studentMobile: authResult.student.mobile,
-      studentEmail: authResult.student.email,
-      accessId: 'GS-' + authResult.assignment.id.slice(-6).toUpperCase(),
-      sessionId: effectiveSessionId.slice(-6).toUpperCase(),
-      printTimestamp: nowFormatted,
-    });
+    const systemSettings = db.getSettings();
+
+    // Generate stamped watermarked PDF in memory with configurable high-visibility settings
+    const watermarkedBuffer = await generateWatermarkedPrintPdf(
+      fullPdfPath,
+      {
+        studentName: authResult.student.name,
+        studentMobile: authResult.student.mobile,
+        studentEmail: authResult.student.email,
+        accessId: 'GS-' + authResult.assignment.id.slice(-6).toUpperCase(),
+        sessionId: effectiveSessionId.slice(-6).toUpperCase(),
+        printTimestamp: nowFormatted,
+      },
+      systemSettings.watermark
+    );
 
     // Return the authorized watermarked binary PDF with strict headers
     res.setHeader('Content-Type', 'application/pdf');
